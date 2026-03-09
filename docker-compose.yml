@@ -11,7 +11,7 @@ services:
   # Docker Socket Proxy — защита Docker socket
   # ═══════════════════════════════════════════
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:v0.4.2
     container_name: docker-socket-proxy
     restart: always
     environment:
@@ -47,7 +47,7 @@ services:
   # Traefik — reverse proxy + SSL
   # ═══════════════════════════════════════════
   traefik:
-    image: traefik:v3.6
+    image: traefik:v3.6.10
     container_name: traefik
     restart: always
     depends_on:
@@ -83,7 +83,7 @@ services:
   # MariaDB
   # ═══════════════════════════════════════════
   mariadb:
-    image: mariadb:12.1.2
+    image: mariadb:12.2.2
     container_name: mariadb
     restart: always
     networks:
@@ -120,7 +120,7 @@ services:
   # Redis — object cache
   # ═══════════════════════════════════════════
   redis:
-    image: redis:7-alpine
+    image: redis:8.6-alpine
     container_name: redis
     restart: always
     networks:
@@ -223,7 +223,7 @@ services:
   # Nginx — web server + FastCGI cache
   # ═══════════════════════════════════════════
   nginx:
-    image: nginx:1.28-alpine
+    image: nginx:1.28.2-alpine
     container_name: nginx
     restart: always
     networks:
