@@ -25,7 +25,8 @@ user           ${SMTP_USER}
 password       ${SMTP_PASSWORD}
 EOF
 
-  chmod 600 /etc/msmtprc
+  chmod 640 /etc/msmtprc
+  chown root:www-data /etc/msmtprc
 fi
 
 # ── Delegate to the original WordPress entrypoint ───────
