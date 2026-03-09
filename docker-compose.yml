@@ -197,6 +197,12 @@ services:
         define('DISABLE_WP_CRON', true);
         define('CONCATENATE_SCRIPTS', false);
         define('WP_CACHE', true);
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_SECURE: ${SMTP_SECURE:-tls}
+      SMTP_FROM: ${SMTP_FROM}
     volumes:
       - ./volumes/wordpress:/var/www/html
       - ./volumes/php-config/wordpress.ini:/usr/local/etc/php/conf.d/wordpress.ini:ro

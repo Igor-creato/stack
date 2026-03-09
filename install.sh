@@ -54,9 +54,24 @@ if [[ -z "$ACME_EMAIL" ]]; then
   exit 1
 fi
 
+# ─── SMTP настройки ─────────────────────────────────────
+echo ""
+info "Настройка отправки email (SMTP)"
+read -rp "$(echo -e "${CYAN}SMTP хост (например: smtp.gmail.com): ${NC}")" SMTP_HOST
+read -rp "$(echo -e "${CYAN}SMTP порт [587]: ${NC}")" SMTP_PORT
+SMTP_PORT="${SMTP_PORT:-587}"
+read -rp "$(echo -e "${CYAN}SMTP пользователь (email): ${NC}")" SMTP_USER
+read -rsp "$(echo -e "${CYAN}SMTP пароль: ${NC}")" SMTP_PASSWORD
+echo ""
+read -rp "$(echo -e "${CYAN}SMTP шифрование (tls/ssl) [tls]: ${NC}")" SMTP_SECURE
+SMTP_SECURE="${SMTP_SECURE:-tls}"
+read -rp "$(echo -e "${CYAN}Email отправителя (From) [${SMTP_USER}]: ${NC}")" SMTP_FROM
+SMTP_FROM="${SMTP_FROM:-$SMTP_USER}"
+
 echo ""
 info "Домен:  $DOMAIN"
 info "Email:  $ACME_EMAIL"
+info "SMTP:   $SMTP_HOST:$SMTP_PORT ($SMTP_SECURE)"
 echo ""
 read -rp "$(echo -e "${YELLOW}Продолжить? (y/n): ${NC}")" CONFIRM
 if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
@@ -155,6 +170,14 @@ WP_AUTH_SALT=${WP_AUTH_SALT}
 WP_SECURE_AUTH_SALT=${WP_SECURE_AUTH_SALT}
 WP_LOGGED_IN_SALT=${WP_LOGGED_IN_SALT}
 WP_NONCE_SALT=${WP_NONCE_SALT}
+
+# SMTP
+SMTP_HOST=${SMTP_HOST}
+SMTP_PORT=${SMTP_PORT}
+SMTP_USER=${SMTP_USER}
+SMTP_PASSWORD=${SMTP_PASSWORD}
+SMTP_SECURE=${SMTP_SECURE}
+SMTP_FROM=${SMTP_FROM}
 EOF
 
 chmod 600 "$INSTALL_DIR/.env"
@@ -282,6 +305,11 @@ echo "    MariaDB root:  $MYSQL_ROOT_PASSWORD"
 echo "    MariaDB user:  $MYSQL_PASSWORD"
 echo "    DB name:       $MYSQL_DATABASE"
 echo "    DB user:       $MYSQL_USER"
+echo ""
+info "SMTP:"
+echo "    Host:     $SMTP_HOST:$SMTP_PORT ($SMTP_SECURE)"
+echo "    User:     $SMTP_USER"
+echo "    From:     $SMTP_FROM"
 echo ""
 warn "ЗАПИШИТЕ ПАРОЛИ! Они также сохранены в .env и secrets/"
 echo ""
