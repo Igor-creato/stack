@@ -1,0 +1,310 @@
+networks:
+  proxy:
+    external: true
+  internal:
+    driver: bridge
+  db-shared:
+    external: true
+
+services:
+  # ═══════════════════════════════════════════
+  # Docker Socket Proxy — защита Docker socket
+  # ═══════════════════════════════════════════
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy
+    restart: always
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+      SERVICES: 0
+      TASKS: 0
+      INFO: 1
+      POST: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      EXEC: 0
+      IMAGES: 0
+      NODES: 0
+      PLUGINS: 0
+      SECRETS: 0
+      SWARM: 0
+      SYSTEM: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ═══════════════════════════════════════════
+  # Traefik — reverse proxy + SSL
+  # ═══════════════════════════════════════════
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: always
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    volumes:
+      - ./volumes/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./volumes/traefik/config.yml:/etc/traefik/config.yml:ro
+      - ./volumes/traefik/acme.json:/acme.json
+      - traefik_logs:/var/log/traefik
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8082/ping || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ═══════════════════════════════════════════
+  # MariaDB
+  # ═══════════════════════════════════════════
+  mariadb:
+    image: mariadb:12.1.2
+    container_name: mariadb
+    restart: always
+    networks:
+      - internal
+      - db-shared
+    ports:
+      - "127.0.0.1:33306:3306"
+    environment:
+      TZ: Europe/Moscow
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_root_password
+      - db_password
+    volumes:
+      - ./volumes/mariadb/data:/var/lib/mysql
+      - ./volumes/mariadb/conf.d:/etc/mysql/conf.d:ro
+      - ./volumes/mariadb/initdb.d:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ═══════════════════════════════════════════
+  # Redis — object cache
+  # ═══════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    networks:
+      - internal
+    command: >
+      redis-server
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+      --tcp-keepalive 60
+      --timeout 300
+      --hz 10
+      --lfu-log-factor 10
+      --activedefrag yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ═══════════════════════════════════════════
+  # WordPress + PHP-FPM
+  # ═══════════════════════════════════════════
+  wordpress:
+    build: .
+    image: wordpress-custom:php8.4-fpm
+    container_name: wordpress
+    restart: always
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    environment:
+      WORDPRESS_DB_HOST: mariadb:3306
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_CONFIG_EXTRA: |
+        /* ── Memory ── */
+        define('WP_MEMORY_LIMIT', '256M');
+        define('WP_MAX_MEMORY_LIMIT', '512M');
+
+        /* ── SSL behind proxy ── */
+        define('FORCE_SSL_ADMIN', true);
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && strpos($$_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false) {
+          $$_SERVER['HTTPS'] = 'on';
+        }
+
+        /* ── Redis Object Cache ── */
+        define('WP_REDIS_HOST', 'redis');
+        define('WP_REDIS_PORT', 6379);
+        define('WP_REDIS_DATABASE', 0);
+        define('WP_REDIS_TIMEOUT', 1);
+        define('WP_REDIS_READ_TIMEOUT', 1);
+
+        /* ── Security ── */
+        define('DISALLOW_FILE_EDIT', true);
+        define('WP_AUTO_UPDATE_CORE', 'minor');
+        define('WP_POST_REVISIONS', 5);
+        define('EMPTY_TRASH_DAYS', 7);
+        define('WP_CRON_LOCK_TIMEOUT', 120);
+
+        /* ── Performance ── */
+        define('DISABLE_WP_CRON', true);
+        define('CONCATENATE_SCRIPTS', false);
+        define('WP_CACHE', true);
+    volumes:
+      - ./volumes/wordpress:/var/www/html
+      - ./volumes/php-config/wordpress.ini:/usr/local/etc/php/conf.d/wordpress.ini:ro
+      - ./volumes/php-config/www.conf:/usr/local/etc/php-fpm.d/zz-www.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck || kill -0 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ═══════════════════════════════════════════
+  # Nginx — web server + FastCGI cache
+  # ═══════════════════════════════════════════
+  nginx:
+    image: nginx:1.28-alpine
+    container_name: nginx
+    restart: always
+    networks:
+      - proxy
+      - internal
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    volumes:
+      - ./volumes/wordpress:/var/www/html:ro
+      - ./volumes/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./volumes/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx_cache:/var/cache/nginx
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+
+      # ── Основной сайт ──
+      - traefik.http.routers.wordpress-main.entrypoints=websecure
+      - traefik.http.routers.wordpress-main.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.wordpress-main.tls=true
+      - traefik.http.routers.wordpress-main.tls.certresolver=letsencrypt
+      - traefik.http.routers.wordpress-main.priority=10
+      - traefik.http.routers.wordpress-main.middlewares=ratelimit,wp-headers
+
+      # ── Админка ──
+      - traefik.http.routers.wordpress-admin.entrypoints=websecure
+      - "traefik.http.routers.wordpress-admin.rule=Host(`${DOMAIN}`) && (PathPrefix(`/wp-admin`) || Path(`/wp-login.php`))"
+      - traefik.http.routers.wordpress-admin.tls=true
+      - traefik.http.routers.wordpress-admin.tls.certresolver=letsencrypt
+      - traefik.http.routers.wordpress-admin.priority=100
+      - traefik.http.routers.wordpress-admin.middlewares=wp-bruteforce,wp-headers
+
+      # ── Rate limit: основной сайт ──
+      - traefik.http.middlewares.ratelimit.ratelimit.average=50
+      - traefik.http.middlewares.ratelimit.ratelimit.burst=200
+      - traefik.http.middlewares.ratelimit.ratelimit.sourcecriterion.ipstrategy.depth=1
+
+      # ── Rate limit: админка (анти-брутфорс) ──
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.average=3
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.burst=5
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.sourcecriterion.ipstrategy.depth=1
+
+      # ── Security headers ──
+      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.X-Frame-Options=SAMEORIGIN
+      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.X-Content-Type-Options=nosniff
+      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.Referrer-Policy=strict-origin-when-cross-origin
+      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.Permissions-Policy=camera=(), microphone=(), geolocation=()
+      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.X-Download-Options=noopen
+      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.X-Permitted-Cross-Domain-Policies=none
+      - traefik.http.middlewares.wp-headers.headers.stsSeconds=31536000
+      - traefik.http.middlewares.wp-headers.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.wp-headers.headers.stsPreload=true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+# ═══════════════════════════════════════════
+# Volumes
+# ═══════════════════════════════════════════
+volumes:
+  mariadb_data:
+    driver: local
+  wordpress_data:
+    driver: local
+  nginx_cache:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=512m,uid=101,gid=101
+  traefik_logs:
+    driver: local
+
+# ═══════════════════════════════════════════
+# Secrets
+# ═══════════════════════════════════════════
+secrets:
+  db_root_password:
+    file: ./secrets/db_root_password.txt
+  db_password:
+    file: ./secrets/db_password.txt
