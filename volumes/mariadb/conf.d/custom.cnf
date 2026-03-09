@@ -11,18 +11,14 @@ collation_server = utf8mb4_unicode_520_ci
 
 # ── InnoDB Engine ──
 innodb_buffer_pool_size = 512M
-innodb_buffer_pool_instances = 2
 innodb_log_file_size = 256M
 innodb_log_buffer_size = 16M
-innodb_flush_method = O_DIRECT
 innodb_flush_log_at_trx_commit = 2
-innodb_file_per_table = 1
 innodb_io_capacity = 2000
 innodb_io_capacity_max = 4000
 innodb_read_io_threads = 4
 innodb_write_io_threads = 4
 innodb_adaptive_hash_index = ON
-innodb_change_buffering = all
 innodb_doublewrite = 1
 innodb_stats_on_metadata = OFF
 innodb_lock_wait_timeout = 10
@@ -60,7 +56,7 @@ slow_query_log = 1
 long_query_time = 1
 slow_query_log_file = /var/log/mysql/slow.log
 log_queries_not_using_indexes = ON
-log_slow_admin_statements = ON
+log_slow_filter = admin,filesort,filesort_on_disk,filesort_priority_queue,full_join,full_scan,query_cache,query_cache_miss,tmp_table,tmp_table_on_disk
 
 # ── Binary Log (point-in-time recovery) ──
 log_bin = mysql-bin

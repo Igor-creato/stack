@@ -93,6 +93,7 @@ services:
       - "127.0.0.1:33306:3306"
     environment:
       TZ: Europe/Moscow
+      MARIADB_AUTO_UPGRADE: "1"
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
