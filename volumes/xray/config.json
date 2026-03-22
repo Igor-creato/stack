@@ -1,0 +1,44 @@
+{
+  "inbounds": [
+    {
+      "port": 10808,
+      "protocol": "socks",
+      "settings": { "udp": true }
+    },
+    {
+      "port": 10809,
+      "protocol": "http",
+      "settings": {}
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "ip or domain name",
+            "port": 443,
+            "users": [
+              {
+                "id": "uuid",
+                "flow": "xtls-rprx-vision",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "serverName": "github.com",
+          "publicKey": "pbk",
+          "shortId": "22"
+        }
+      }
+    }
+  ]
+}

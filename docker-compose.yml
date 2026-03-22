@@ -40,8 +40,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "5m"
-        max-file: "3"
+        max-size: '5m'
+        max-file: '3'
 
   # ═══════════════════════════════════════════
   # Traefik — reverse proxy + SSL
@@ -54,8 +54,8 @@ services:
       docker-socket-proxy:
         condition: service_started
     ports:
-      - "80:80"
-      - "443:443"
+      - '80:80'
+      - '443:443'
     environment:
       DOCKER_HOST: tcp://docker-socket-proxy:2375
     volumes:
@@ -64,11 +64,11 @@ services:
       - ./volumes/traefik/acme.json:/acme.json
       - traefik_logs:/var/log/traefik
     command:
-      - "--configFile=/etc/traefik/traefik.yml"
+      - '--configFile=/etc/traefik/traefik.yml'
     networks:
       - proxy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8082/ping || exit 1"]
+      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:8082/ping || exit 1']
       interval: 30s
       timeout: 5s
       retries: 3
@@ -76,8 +76,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "5"
+        max-size: '10m'
+        max-file: '5'
 
   # ═══════════════════════════════════════════
   # MariaDB
@@ -90,10 +90,10 @@ services:
       - internal
       - db-shared
     ports:
-      - "127.0.0.1:33306:3306"
+      - '127.0.0.1:33306:3306'
     environment:
       TZ: Europe/Moscow
-      MARIADB_AUTO_UPGRADE: "1"
+      MARIADB_AUTO_UPGRADE: '1'
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
@@ -106,7 +106,7 @@ services:
       - ./volumes/mariadb/conf.d:/etc/mysql/conf.d:ro
       - ./volumes/mariadb/initdb.d:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
       interval: 20s
       timeout: 10s
       retries: 5
@@ -114,8 +114,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "5"
+        max-size: '10m'
+        max-file: '5'
 
   # ═══════════════════════════════════════════
   # Redis — object cache
@@ -138,7 +138,7 @@ services:
       --lfu-log-factor 10
       --activedefrag yes
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 3s
       retries: 3
@@ -146,8 +146,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "5m"
-        max-file: "3"
+        max-size: '5m'
+        max-file: '3'
 
   # ═══════════════════════════════════════════
   # WordPress + PHP-FPM
@@ -164,6 +164,10 @@ services:
         condition: service_healthy
     networks:
       - internal
+    # test server
+    #extra_hosts:
+    #  - 'host.docker.internal:host-gateway'
+    # test server
     environment:
       WORDPRESS_DB_HOST: mariadb:3306
       WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
@@ -209,7 +213,7 @@ services:
       - ./volumes/php-config/wordpress.ini:/usr/local/etc/php/conf.d/wordpress.ini:ro
       - ./volumes/php-config/www.conf:/usr/local/etc/php-fpm.d/zz-www.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "php-fpm-healthcheck || kill -0 1"]
+      test: ['CMD-SHELL', 'php-fpm-healthcheck || kill -0 1']
       interval: 15s
       timeout: 5s
       retries: 5
@@ -217,8 +221,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "5"
+        max-size: '10m'
+        max-file: '5'
 
   # ═══════════════════════════════════════════
   # Nginx — web server + FastCGI cache
@@ -252,7 +256,7 @@ services:
 
       # ── Админка ──
       - traefik.http.routers.wordpress-admin.entrypoints=websecure
-      - "traefik.http.routers.wordpress-admin.rule=Host(`${DOMAIN}`) && (PathPrefix(`/wp-admin`) || Path(`/wp-login.php`))"
+      - 'traefik.http.routers.wordpress-admin.rule=Host(`${DOMAIN}`) && (PathPrefix(`/wp-admin`) || Path(`/wp-login.php`))'
       - traefik.http.routers.wordpress-admin.tls=true
       - traefik.http.routers.wordpress-admin.tls.certresolver=letsencrypt
       - traefik.http.routers.wordpress-admin.priority=100
@@ -278,8 +282,13 @@ services:
       - traefik.http.middlewares.wp-headers.headers.stsSeconds=31536000
       - traefik.http.middlewares.wp-headers.headers.stsIncludeSubdomains=true
       - traefik.http.middlewares.wp-headers.headers.stsPreload=true
+
+      #закрытие от поисковых ботов
+      #- traefik.http.middlewares.noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow, noarchive, nosnippet
+      #- traefik.http.middlewares.basicauth.basicauth.users=admin:$$apr1$$8HLTOY/o$$PCSv4BPd6dhrvNzGmGSgq.
+      #- traefik.http.routers.wordpress-main.middlewares=ratelimit,wp-headers,noindex,basicauth
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1']
       interval: 30s
       timeout: 5s
       retries: 3
@@ -287,17 +296,64 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "5"
+        max-size: '10m'
+        max-file: '5'
+
+  netdata:
+    environment:
+      - HTTPS_PROXY=http://xray-client:10809
+      - https_proxy=http://xray-client:10809
+      - HTTP_PROXY=http://xray-client:10809
+      - http_proxy=http://xray-client:10809
+      - NO_PROXY=localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8
+      - no_proxy=localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8
+    depends_on:
+      - xray-client
+    image: netdata/netdata:stable
+    container_name: netdata
+    restart: unless-stopped
+    pid: host
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./volumes/netdata/health_alarm_notify.conf:/etc/netdata/health_alarm_notify.conf:ro
+      - ./volumes/netdata/health.d/docker-custom.conf:/etc/netdata/health.d/docker-custom.conf:ro
+      - ./volumes/netdata/health.d/host-resources.conf:/etc/netdata/health.d/host-resources.conf:ro
+      - ./volumes/netdata/health.d/containers-resources.conf:/etc/netdata/health.d/containers-resources.conf:ro
+      - netdata_lib:/var/lib/netdata # ← добавить
+      - netdata_cache:/var/cache/netdata # ← добавить
+    ports:
+      - '127.0.0.1:19999:19999'
+    networks:
+      - internal
+      - proxy
+
+  xray-client:
+    #ports:
+    #  - "127.0.0.1:10808:10808"
+    image: teddysun/xray:latest
+    container_name: xray-client
+    restart: always
+    volumes:
+      - ./volumes/xray/config.json:/etc/xray/config.json:ro
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '3'
 
 # ═══════════════════════════════════════════
 # Volumes
 # ═══════════════════════════════════════════
 volumes:
-  mariadb_data:
-    driver: local
-  wordpress_data:
-    driver: local
+  netdata_lib:
+  netdata_cache:
   nginx_cache:
     driver: local
     driver_opts:
