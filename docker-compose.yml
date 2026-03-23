@@ -126,9 +126,10 @@ services:
     restart: always
     networks:
       - internal
+      - db-shared
     command: >
       redis-server
-      --maxmemory 128mb
+      --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --save ""
       --appendonly no
@@ -172,7 +173,8 @@ services:
       WORDPRESS_DB_HOST: mariadb:3306
       WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
       WORDPRESS_DB_USER: ${MYSQL_USER}
-      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      #WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
       WORDPRESS_CONFIG_EXTRA: |
         /* ── Memory ── */
         define('WP_MEMORY_LIMIT', '256M');
@@ -208,6 +210,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_SECURE: ${SMTP_SECURE:-tls}
       SMTP_FROM: ${SMTP_FROM}
+    secrets:
+      - db_password
     volumes:
       - ./volumes/wordpress:/var/www/html
       - ./volumes/php-config/wordpress.ini:/usr/local/etc/php/conf.d/wordpress.ini:ro
@@ -299,61 +303,76 @@ services:
         max-size: '10m'
         max-file: '5'
 
-  netdata:
-    environment:
-      - HTTPS_PROXY=http://xray-client:10809
-      - https_proxy=http://xray-client:10809
-      - HTTP_PROXY=http://xray-client:10809
-      - http_proxy=http://xray-client:10809
-      - NO_PROXY=localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8
-      - no_proxy=localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8
-    depends_on:
-      - xray-client
-    image: netdata/netdata:stable
-    container_name: netdata
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
     restart: unless-stopped
     pid: host
-    cap_add:
-      - SYS_PTRACE
-      - SYS_ADMIN
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./volumes/netdata/health_alarm_notify.conf:/etc/netdata/health_alarm_notify.conf:ro
-      - ./volumes/netdata/health.d/docker-custom.conf:/etc/netdata/health.d/docker-custom.conf:ro
-      - ./volumes/netdata/health.d/host-resources.conf:/etc/netdata/health.d/host-resources.conf:ro
-      - ./volumes/netdata/health.d/containers-resources.conf:/etc/netdata/health.d/containers-resources.conf:ro
-      - netdata_lib:/var/lib/netdata # ← добавить
-      - netdata_cache:/var/cache/netdata # ← добавить
-    ports:
-      - '127.0.0.1:19999:19999'
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
       - internal
-      - proxy
-
-  xray-client:
-    #ports:
-    #  - "127.0.0.1:10808:10808"
-    image: teddysun/xray:latest
-    container_name: xray-client
-    restart: always
-    volumes:
-      - ./volumes/xray/config.json:/etc/xray/config.json:ro
-    networks:
-      - internal
+    # ports:
+    #   - '127.0.0.1:9100:9100'
     logging:
       driver: json-file
       options:
         max-size: '5m'
-        max-file: '3'
+        max-file: '2'
 
+  cadvisor:
+    image: docker.io/zcube/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - internal
+    # ports:
+    #   - '127.0.0.1:9101:8080'
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '2'
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./volumes/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d' # локально только 7 дней
+      - '--web.listen-address=0.0.0.0:9090'
+    networks:
+      - internal
+    # ports:
+    #   - '127.0.0.1:9090:9090'
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '2'
 # ═══════════════════════════════════════════
 # Volumes
 # ═══════════════════════════════════════════
+
 volumes:
-  netdata_lib:
-  netdata_cache:
   nginx_cache:
     driver: local
     driver_opts:
@@ -362,6 +381,7 @@ volumes:
       o: size=512m,uid=101,gid=101
   traefik_logs:
     driver: local
+  prometheus_data:
 
 # ═══════════════════════════════════════════
 # Secrets
