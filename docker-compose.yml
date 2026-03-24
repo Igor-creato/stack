@@ -47,7 +47,7 @@ services:
   # Traefik — reverse proxy + SSL
   # ═══════════════════════════════════════════
   traefik:
-    image: traefik:v3.6.10
+    image: traefik:v3.6.11
     container_name: traefik
     restart: always
     depends_on:
@@ -223,27 +223,28 @@ services:
         max-size: '10m'
         max-file: '5'
 
-  # ═══════════════════════════════════════════
-  # Nginx — web server + FastCGI cache
-  # ═══════════════════════════════════════════
-  nginx:
-    image: nginx:1.28.2-alpine
-    container_name: nginx
+  modsecurity:
+    image: owasp/modsecurity-crs:4.24.1-nginx-alpine-202603150103
+    container_name: modsecurity
     restart: always
     networks:
-      - proxy
-      - internal
+      - proxy # принимает от Traefik
+      - internal # отдаёт в Nginx
     depends_on:
-      wordpress:
+      nginx:
         condition: service_healthy
-    volumes:
-      - ./volumes/wordpress:/var/www/html:ro
-      - ./volumes/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./volumes/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - nginx_cache:/var/cache/nginx
+    environment:
+      - BACKEND=http://nginx:80
+      - PARANOIA=1
+      - ANOMALY_INBOUND=5
+      - ANOMALY_OUTBOUND=4
+      - MODSEC_RULE_ENGINE=DetectionOnly # первые 1-2 недели только логи
+      - ALLOWED_METHODS=GET HEAD POST OPTIONS PUT PATCH DELETE
+      - MAX_FILE_SIZE=67108864
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
+      - traefik.http.services.modsec-svc.loadbalancer.server.port=8080
 
       # ── Основной сайт ──
       - traefik.http.routers.wordpress-main.entrypoints=websecure
@@ -251,6 +252,7 @@ services:
       - traefik.http.routers.wordpress-main.tls=true
       - traefik.http.routers.wordpress-main.tls.certresolver=letsencrypt
       - traefik.http.routers.wordpress-main.priority=10
+      - traefik.http.routers.wordpress-main.service=modsec-svc
       - traefik.http.routers.wordpress-main.middlewares=ratelimit,wp-headers
 
       # ── Админка ──
@@ -259,6 +261,7 @@ services:
       - traefik.http.routers.wordpress-admin.tls=true
       - traefik.http.routers.wordpress-admin.tls.certresolver=letsencrypt
       - traefik.http.routers.wordpress-admin.priority=100
+      - traefik.http.routers.wordpress-admin.service=modsec-svc
       - traefik.http.routers.wordpress-admin.middlewares=wp-bruteforce,wp-headers
 
       # ── Rate limit: основной сайт ──
@@ -276,8 +279,6 @@ services:
       - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.X-Content-Type-Options=nosniff
       - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.Referrer-Policy=strict-origin-when-cross-origin
       - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.Permissions-Policy=camera=(), microphone=(), geolocation=()
-      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.X-Download-Options=noopen
-      - traefik.http.middlewares.wp-headers.headers.customResponseHeaders.X-Permitted-Cross-Domain-Policies=none
       - traefik.http.middlewares.wp-headers.headers.stsSeconds=31536000
       - traefik.http.middlewares.wp-headers.headers.stsIncludeSubdomains=true
       - traefik.http.middlewares.wp-headers.headers.stsPreload=true
@@ -286,6 +287,37 @@ services:
       #- traefik.http.middlewares.noindex.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow, noarchive, nosnippet
       #- traefik.http.middlewares.basicauth.basicauth.users=admin:$$apr1$$8HLTOY/o$$PCSv4BPd6dhrvNzGmGSgq.
       #- traefik.http.routers.wordpress-main.middlewares=ratelimit,wp-headers,noindex,basicauth
+
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  # ═══════════════════════════════════════════
+  # Nginx — web server + FastCGI cache
+  # ═══════════════════════════════════════════
+  nginx:
+    image: nginx:1.28.2-alpine
+    container_name: nginx
+    restart: always
+    networks:
+      - internal
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    volumes:
+      - ./volumes/wordpress:/var/www/html:ro
+      - ./volumes/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./volumes/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx_cache:/var/cache/nginx
+
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1']
       interval: 30s
@@ -302,7 +334,7 @@ services:
   # node-exporter — метрики хоста (CPU/RAM/диск)
   # ═══════════════════════════════════════════
   node-exporter:
-    image: prom/node-exporter:v1.8.2
+    image: prom/node-exporter:v1.10.2
     container_name: node-exporter
     restart: unless-stopped
     pid: host
@@ -382,7 +414,7 @@ services:
   # Затем открыть: http://localhost:3000
   # ═══════════════════════════════════════════
   grafana:
-    image: grafana/grafana:12.3
+    image: grafana/grafana:12.4.1
     container_name: grafana
     restart: unless-stopped
     ports:

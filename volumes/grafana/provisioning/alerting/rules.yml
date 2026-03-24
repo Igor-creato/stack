@@ -161,7 +161,7 @@ groups:
               datasource:
                 type: prometheus
                 uid: victoriametrics-uid
-              expr: absent(container_last_seen{name=~"nginx|wordpress|mariadb|traefik|redis|postback-app-receiver-1|postback-app-admin-1|postback-worker-1"})
+              expr: absent(container_last_seen{name=~"nginx|wordpress|mariadb|traefik|redis|modsecurity|postback-app-receiver-1|postback-app-admin-1|postback-worker-1"})
               instant: true
               refId: A
           - refId: C
