@@ -327,13 +327,18 @@ services:
   # cAdvisor — метрики Docker-контейнеров
   # ═══════════════════════════════════════════
   cadvisor:
-    image: zcube/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
     restart: unless-stopped
+    command:
+      - '--docker_only=true'
+    environment:
+      - DOCKER_API_VERSION=1.44
     privileged: true
     volumes:
       - /:/rootfs:ro
-      - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
@@ -349,7 +354,7 @@ services:
   # VictoriaMetrics — сбор и хранение метрик
   # ═══════════════════════════════════════════
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.101.0
+    image: victoriametrics/victoria-metrics:v1.138.0
     container_name: victoriametrics
     restart: unless-stopped
     command:
@@ -377,7 +382,7 @@ services:
   # Затем открыть: http://localhost:3000
   # ═══════════════════════════════════════════
   grafana:
-    image: grafana/grafana:11.1.0
+    image: grafana/grafana:12.3
     container_name: grafana
     restart: unless-stopped
     ports:
