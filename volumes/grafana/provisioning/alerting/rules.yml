@@ -1,0 +1,171 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: server-alerts
+    folder: Alerts
+    interval: 1m
+    rules:
+      # ── RAM < 300 MB свободно ──
+      - uid: alert-ram-low
+        title: 'RAM заканчивается'
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: '- Mixed -'
+            model:
+              datasource:
+                type: prometheus
+                uid: __default__
+              expr: node_memory_MemAvailable_bytes / 1024 / 1024
+              instant: true
+              refId: A
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              conditions:
+                - evaluator:
+                    params: [300]
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: 'Свободно менее 300 MB RAM на сервере'
+        labels:
+          severity: critical
+
+      # ── CPU > 85% в течение 5 минут ──
+      - uid: alert-cpu-high
+        title: 'CPU перегружен'
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: '- Mixed -'
+            model:
+              datasource:
+                type: prometheus
+                uid: __default__
+              expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+              instant: true
+              refId: A
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              conditions:
+                - evaluator:
+                    params: [85]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'CPU загружен более 85% уже 5 минут'
+        labels:
+          severity: warning
+
+      # ── Диск > 85% ──
+      - uid: alert-disk-full
+        title: 'Диск заполнен'
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: '- Mixed -'
+            model:
+              datasource:
+                type: prometheus
+                uid: __default__
+              expr: 100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100)
+              instant: true
+              refId: A
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              conditions:
+                - evaluator:
+                    params: [85]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: 'Диск заполнен более чем на 85%'
+        labels:
+          severity: critical
+
+      # ── Контейнер не виден более 2 минут ──
+      - uid: alert-container-down
+        title: 'Контейнер упал'
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: '- Mixed -'
+            model:
+              datasource:
+                type: prometheus
+                uid: __default__
+              expr: absent(container_last_seen{name=~"wordpress|mariadb|nginx|redis|traefik"})
+              instant: true
+              refId: A
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              conditions:
+                - evaluator:
+                    params: [0]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: 'Один из ключевых контейнеров не отвечает более 2 минут'
+        labels:
+          severity: critical

@@ -1,0 +1,34 @@
+apiVersion: 1
+
+# ─────────────────────────────────────────────
+# Контакт для уведомлений — Email через Timeweb SMTP
+# SMTP настраивается в секции environment сервиса grafana
+# ─────────────────────────────────────────────
+contactPoints:
+  - orgId: 1
+    name: Email
+    receivers:
+      - uid: email-receiver
+        type: email
+        settings:
+          addresses: 'ВАШ_EMAIL@example.com'
+          subject: |
+            {{ if eq .Status "firing" }}🔴 ALERT{{ else }}✅ RESOLVED{{ end }}: {{ .CommonLabels.alertname }}
+          message: |
+            {{ if eq .Status "firing" }}🔴 Проблема{{ else }}✅ Устранено{{ end }}
+
+            Алерт: {{ .CommonLabels.alertname }}
+            {{ range .Alerts }}
+            {{ .Annotations.summary }}
+            {{ end }}
+
+# ─────────────────────────────────────────────
+# Политика маршрутизации — все алерты → Email
+# ─────────────────────────────────────────────
+policies:
+  - orgId: 1
+    receiver: Email
+    group_by: ['alertname']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
