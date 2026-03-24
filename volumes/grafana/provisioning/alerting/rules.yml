@@ -12,16 +12,22 @@ groups:
         condition: C
         data:
           - refId: A
-            datasourceUid: '- Mixed -'
+            datasourceUid: victoriametrics-uid
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               datasource:
                 type: prometheus
-                uid: __default__
+                uid: victoriametrics-uid
               expr: node_memory_MemAvailable_bytes / 1024 / 1024
               instant: true
               refId: A
           - refId: C
             datasourceUid: '__expr__'
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               conditions:
                 - evaluator:
@@ -53,16 +59,22 @@ groups:
         condition: C
         data:
           - refId: A
-            datasourceUid: '- Mixed -'
+            datasourceUid: victoriametrics-uid
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               datasource:
                 type: prometheus
-                uid: __default__
+                uid: victoriametrics-uid
               expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
               instant: true
               refId: A
           - refId: C
             datasourceUid: '__expr__'
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               conditions:
                 - evaluator:
@@ -94,16 +106,22 @@ groups:
         condition: C
         data:
           - refId: A
-            datasourceUid: '- Mixed -'
+            datasourceUid: victoriametrics-uid
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               datasource:
                 type: prometheus
-                uid: __default__
+                uid: victoriametrics-uid
               expr: 100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100)
               instant: true
               refId: A
           - refId: C
             datasourceUid: '__expr__'
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               conditions:
                 - evaluator:
@@ -135,16 +153,22 @@ groups:
         condition: C
         data:
           - refId: A
-            datasourceUid: '- Mixed -'
+            datasourceUid: victoriametrics-uid
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               datasource:
                 type: prometheus
-                uid: __default__
+                uid: victoriametrics-uid
               expr: absent(container_last_seen{name=~"wordpress|mariadb|nginx|redis|traefik"})
               instant: true
               refId: A
           - refId: C
             datasourceUid: '__expr__'
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               conditions:
                 - evaluator:

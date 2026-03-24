@@ -365,12 +365,6 @@ services:
     depends_on:
       - node-exporter
       - cadvisor
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:8428/health || exit 1']
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     logging:
       driver: json-file
       options:
@@ -407,9 +401,6 @@ services:
       - ./volumes/grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
       - internal
-    depends_on:
-      victoriametrics:
-        condition: service_healthy
     healthcheck:
       test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:3000/api/health || exit 1']
       interval: 30s
