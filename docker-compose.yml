@@ -364,6 +364,11 @@ services:
     restart: unless-stopped
     command:
       - '--docker_only=true'
+      - '--housekeeping_interval=30s'
+      - '--store_container_labels=true'
+    depends_on:
+      modsecurity:
+        condition: service_healthy
     environment:
       - DOCKER_API_VERSION=1.44
     privileged: true

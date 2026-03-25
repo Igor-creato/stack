@@ -9,10 +9,10 @@ scrape_configs:
   - job_name: cadvisor
     static_configs:
       - targets: ['cadvisor:8080']
-    # metric_relabel_configs:
-    #   - source_labels: [__name__]
-    #     regex: 'container_(cpu_usage_seconds_total|memory_usage_bytes|memory_working_set_bytes|network_receive_bytes_total|network_transmit_bytes_total|last_seen)'
-    #     action: keep
+
+    metric_relabel_configs:
+      - action: labeldrop
+        regex: 'container_label_traefik.*|container_label_org_opencontainers.*|container_label_maintainer'
 
   - job_name: victoriametrics
     static_configs:
