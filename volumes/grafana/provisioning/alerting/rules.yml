@@ -6,331 +6,194 @@ groups:
     folder: Alerts
     interval: 1m
     rules:
-      # ── RAM < 300 MB свободно ──
-      - uid: alert-ram-low
-        title: 'RAM заканчивается'
-        condition: C
-        data:
-          - refId: A
-            datasourceUid: victoriametrics-uid
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              datasource:
-                type: prometheus
-                uid: victoriametrics-uid
-              expr: node_memory_MemAvailable_bytes / 1024 / 1024
-              instant: true
-              refId: A
-          - refId: C
-            datasourceUid: '__expr__'
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              conditions:
-                - evaluator:
-                    params: [300]
-                    type: lt
-                  operator:
-                    type: and
-                  query:
-                    params: [A]
-                  reducer:
-                    type: last
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              refId: C
-              type: threshold
-        noDataState: NoData
-        execErrState: Error
-        for: 2m
-        annotations:
-          summary: 'Свободно менее 300 MB RAM на сервере'
-        labels:
-          severity: critical
+      # ================= HOST =================
 
-      # ── CPU > 85% в течение 5 минут ──
-      - uid: alert-cpu-high
-        title: 'CPU перегружен'
+      - uid: ram-low
+        title: 'Low RAM'
         condition: C
         data:
           - refId: A
-            datasourceUid: victoriametrics-uid
             relativeTimeRange:
               from: 600
               to: 0
+            datasourceUid: victoriametrics-uid
             model:
-              datasource:
-                type: prometheus
-                uid: victoriametrics-uid
-              expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+              expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes
               instant: true
-              refId: A
           - refId: C
             datasourceUid: '__expr__'
+            model:
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [0.1] }
+                  reducer: { type: last }
+              type: threshold
+        for: 3m
+        labels: { severity: warning }
+
+      - uid: cpu-high
+        title: 'CPU core overloaded'
+        condition: C
+        data:
+          - refId: A
             relativeTimeRange:
               from: 600
               to: 0
+            datasourceUid: victoriametrics-uid
             model:
-              conditions:
-                - evaluator:
-                    params: [85]
-                    type: gt
-                  operator:
-                    type: and
-                  query:
-                    params: [A]
-                  reducer:
-                    type: last
-              datasource:
-                type: __expr__
-                uid: __expr__
+              expr: 1 - min(rate(node_cpu_seconds_total{mode="idle"}[2m]))
+              instant: true
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
               expression: A
-              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0.9] }
+                  reducer: { type: last }
               type: threshold
-        noDataState: NoData
-        execErrState: Error
+        for: 3m
+        labels: { severity: warning }
+
+      - uid: disk-low
+        title: 'Disk almost full'
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: victoriametrics-uid
+            model:
+              expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}
+              instant: true
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [0.15] }
+                  reducer: { type: last }
+              type: threshold
+        for: 3m
+        labels: { severity: critical }
+
+      # ================= CONTAINERS =================
+
+      - uid: container-down
+        title: 'Container not updating'
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: victoriametrics-uid
+            model:
+              expr: time() - container_last_seen{name=~"nginx|wordpress|mariadb|traefik|redis|modsecurity|postback.*"}
+              instant: true
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [60] }
+                  reducer: { type: last }
+              type: threshold
+        for: 2m
+        labels: { severity: critical }
+
+      - uid: container-cpu
+        title: 'Container CPU high'
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: victoriametrics-uid
+            model:
+              expr: sum by (container) (rate(container_cpu_usage_seconds_total[2m]))
+              instant: true
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.7] }
+                  reducer: { type: last }
+              type: threshold
+        for: 3m
+        labels: { severity: warning }
+
+      - uid: container-memory-leak
+        title: 'Container memory growth'
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: victoriametrics-uid
+            model:
+              expr: increase(container_memory_usage_bytes[5m])
+              instant: true
+          - refId: C
+            datasourceUid: '__expr__'
+            model:
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [50000000] } # ~50MB рост за 5м
+                  reducer: { type: last }
+              type: threshold
         for: 5m
-        annotations:
-          summary: 'CPU загружен более 85% уже 5 минут'
-        labels:
-          severity: warning
+        labels: { severity: warning }
 
-      # ── Диск > 85% ──
-      - uid: alert-disk-full
-        title: 'Диск заполнен'
+      # ================= CORE =================
+
+      - uid: vm-down
+        title: 'VictoriaMetrics down'
         condition: C
         data:
           - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
             datasourceUid: victoriametrics-uid
-            relativeTimeRange:
-              from: 300
-              to: 0
             model:
-              datasource:
-                type: prometheus
-                uid: victoriametrics-uid
-              expr: 100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100)
-              instant: true
-              refId: A
-          - refId: C
-            datasourceUid: '__expr__'
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              conditions:
-                - evaluator:
-                    params: [85]
-                    type: gt
-                  operator:
-                    type: and
-                  query:
-                    params: [A]
-                  reducer:
-                    type: last
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              refId: C
-              type: threshold
-        noDataState: NoData
-        execErrState: Error
-        for: 2m
-        annotations:
-          summary: 'Диск заполнен более чем на 85%'
-        labels:
-          severity: critical
-
-      # ── Критичные контейнеры (сайт) ──
-      - uid: alert-container-critical
-        title: 'Критичный контейнер упал'
-        condition: C
-        data:
-          - refId: A
-            datasourceUid: victoriametrics-uid
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              datasource:
-                type: prometheus
-                uid: victoriametrics-uid
-              expr: absent(container_last_seen{name=~"nginx|wordpress|mariadb|traefik|redis|modsecurity|postback-app-receiver-1|postback-app-admin-1|postback-worker-1"})
-              instant: true
-              refId: A
-          - refId: C
-            datasourceUid: '__expr__'
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              conditions:
-                - evaluator:
-                    params: [0]
-                    type: gt
-                  operator:
-                    type: and
-                  query:
-                    params: [A]
-                  reducer:
-                    type: last
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              refId: C
-              type: threshold
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 2m
-        annotations:
-          summary: 'Критичный контейнер не отвечает — сайт может быть недоступен'
-        labels:
-          severity: critical
-
-      # ── Некритичные контейнеры (мониторинг) ──
-      - uid: alert-container-monitoring
-        title: 'Контейнер мониторинга упал'
-        condition: C
-        data:
-          - refId: A
-            datasourceUid: victoriametrics-uid
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              datasource:
-                type: prometheus
-                uid: victoriametrics-uid
-              expr: absent(container_last_seen{name=~"node-exporter|docker-socket-proxy|grafana"})
-              instant: true
-              refId: A
-          - refId: C
-            datasourceUid: '__expr__'
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              conditions:
-                - evaluator:
-                    params: [0]
-                    type: gt
-                  operator:
-                    type: and
-                  query:
-                    params: [A]
-                  reducer:
-                    type: last
-              datasource:
-                type: __expr__
-                uid: __expr__
-              expression: A
-              refId: C
-              type: threshold
-        noDataState: OK
-        execErrState: Error
-        for: 2m
-        annotations:
-          summary: 'Контейнер мониторинга не отвечает'
-        labels:
-          severity: warning
-
-      # ── VictoriaMetrics недоступна ──
-      - uid: alert-vm-down
-        title: 'VictoriaMetrics упала'
-        condition: C
-        data:
-          - refId: A
-            datasourceUid: victoriametrics-uid
-            relativeTimeRange:
-              from: 300
-              to: 0
-            model:
-              datasource:
-                type: prometheus
-                uid: victoriametrics-uid
               expr: up{job="victoriametrics"}
               instant: true
-              refId: A
           - refId: C
             datasourceUid: '__expr__'
-            relativeTimeRange:
-              from: 300
-              to: 0
             model:
-              conditions:
-                - evaluator:
-                    params: [1]
-                    type: lt
-                  operator:
-                    type: and
-                  query:
-                    params: [A]
-                  reducer:
-                    type: last
-              datasource:
-                type: __expr__
-                uid: __expr__
               expression: A
-              refId: C
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+                  reducer: { type: last }
               type: threshold
-        noDataState: Alerting
-        execErrState: Alerting
         for: 2m
-        annotations:
-          summary: 'VictoriaMetrics не отвечает — мониторинг слеп'
-        labels:
-          severity: critical
+        noDataState: Alerting
+        labels: { severity: critical }
 
-      # ── cAdvisor недоступен ──
-      - uid: alert-cadvisor-down
-        title: 'cAdvisor упал'
+      - uid: cadvisor-down
+        title: 'cAdvisor down'
         condition: C
         data:
           - refId: A
-            datasourceUid: victoriametrics-uid
             relativeTimeRange:
-              from: 300
+              from: 600
               to: 0
+            datasourceUid: victoriametrics-uid
             model:
-              datasource:
-                type: prometheus
-                uid: victoriametrics-uid
               expr: up{job="cadvisor"}
               instant: true
-              refId: A
           - refId: C
             datasourceUid: '__expr__'
-            relativeTimeRange:
-              from: 300
-              to: 0
             model:
-              conditions:
-                - evaluator:
-                    params: [1]
-                    type: lt
-                  operator:
-                    type: and
-                  query:
-                    params: [A]
-                  reducer:
-                    type: last
-              datasource:
-                type: __expr__
-                uid: __expr__
               expression: A
-              refId: C
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+                  reducer: { type: last }
               type: threshold
-        noDataState: Alerting
-        execErrState: Alerting
         for: 2m
-        annotations:
-          summary: 'cAdvisor не отвечает — метрики контейнеров недоступны'
-        labels:
-          severity: critical
+        noDataState: Alerting
+        labels: { severity: critical }
