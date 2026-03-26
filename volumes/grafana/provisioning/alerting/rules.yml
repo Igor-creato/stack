@@ -131,21 +131,21 @@ groups:
         data:
           - refId: A
             relativeTimeRange:
-              from: 600
+              from: 3600
               to: 0
             datasourceUid: victoriametrics-uid
             model:
-              expr: increase(container_memory_usage_bytes[5m])
+              expr: deriv(container_memory_usage_bytes[30m]) * 3600
               instant: true
           - refId: C
             datasourceUid: '__expr__'
             model:
               expression: A
               conditions:
-                - evaluator: { type: gt, params: [50000000] } # ~50MB рост за 5м
+                - evaluator: { type: gt, params: [209715200] } # ~200MB/час стабильного роста
                   reducer: { type: last }
               type: threshold
-        for: 5m
+        for: 15m
         labels: { severity: warning }
 
       # ================= CORE =================
