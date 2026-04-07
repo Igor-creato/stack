@@ -255,23 +255,32 @@ services:
       - traefik.http.routers.wordpress-main.service=modsec-svc
       - traefik.http.routers.wordpress-main.middlewares=ratelimit,wp-headers
 
-      # ── Админка ──
+      # ── Админка (БЕЗ rate limit!) ──
       - traefik.http.routers.wordpress-admin.entrypoints=websecure
-      - 'traefik.http.routers.wordpress-admin.rule=Host(`${DOMAIN}`) && (PathPrefix(`/wp-admin`) || Path(`/wp-login.php`))'
+      - 'traefik.http.routers.wordpress-admin.rule=Host(`${DOMAIN}`) && PathPrefix(`/wp-admin`)'
       - traefik.http.routers.wordpress-admin.tls=true
       - traefik.http.routers.wordpress-admin.tls.certresolver=letsencrypt
       - traefik.http.routers.wordpress-admin.priority=100
       - traefik.http.routers.wordpress-admin.service=modsec-svc
-      - traefik.http.routers.wordpress-admin.middlewares=wp-bruteforce,wp-headers
+      - traefik.http.routers.wordpress-admin.middlewares=wp-headers
+
+      # ── Логин (ТОЛЬКО тут защита от брутфорса) ──
+      - traefik.http.routers.wordpress-login.entrypoints=websecure
+      - 'traefik.http.routers.wordpress-login.rule=Host(`${DOMAIN}`) && Path(`/wp-login.php`)'
+      - traefik.http.routers.wordpress-login.tls=true
+      - traefik.http.routers.wordpress-login.tls.certresolver=letsencrypt
+      - traefik.http.routers.wordpress-login.priority=200
+      - traefik.http.routers.wordpress-login.service=modsec-svc
+      - traefik.http.routers.wordpress-login.middlewares=wp-bruteforce,wp-headers
 
       # ── Rate limit: основной сайт ──
       - traefik.http.middlewares.ratelimit.ratelimit.average=50
       - traefik.http.middlewares.ratelimit.ratelimit.burst=200
       - traefik.http.middlewares.ratelimit.ratelimit.sourcecriterion.ipstrategy.depth=1
 
-      # ── Rate limit: админка (анти-брутфорс) ──
-      - traefik.http.middlewares.wp-bruteforce.ratelimit.average=3
-      - traefik.http.middlewares.wp-bruteforce.ratelimit.burst=5
+      # ── Rate limit: логин (адекватный, не убийственный) ──
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.average=5
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.burst=10
       - traefik.http.middlewares.wp-bruteforce.ratelimit.sourcecriterion.ipstrategy.depth=1
 
       # ── Security headers ──
