@@ -1,16 +1,29 @@
 FROM wordpress:6.9.4-php8.4-fpm
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends msmtp msmtp-mta ca-certificates \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    msmtp \
+    msmtp-mta \
+    && rm -rf /var/lib/apt/lists/*
 
+RUN echo "sendmail_path = \"/usr/bin/msmtp -t\"" > /usr/local/etc/php/conf.d/mail.ini
+
+# Копируем ВАШ файл
 COPY docker-entrypoint-msmtp.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint-msmtp.sh
 
-RUN curl -o /usr/local/bin/wp https://github.com/wp-cli/wp-cli/releases/download/v2.12.0/wp-cli-2.12.0.phar \
-    && chmod +x /usr/local/bin/wp \
-    && mkdir -p /var/www/.wp-cli/cache \
-    && chown -R www-data:www-data /var/www/.wp-cli
+RUN echo '#!/bin/sh\n\
+    if nc -z localhost 9000; then\n\
+    SCRIPT_NAME=/fpm-status SCRIPT_FILENAME=/fpm-status QUERY_STRING=json REQUEST_METHOD=GET cgi-fcgi -bind -connect localhost:9000 2>/dev/null | grep -q "pool.*www"\n\
+    exit $?\n\
+    else\n\
+    exit 1\n\
+    fi' > /usr/local/bin/php-fpm-healthcheck && \
+    chmod +x /usr/local/bin/php-fpm-healthcheck
 
-ENTRYPOINT ["docker-entrypoint-msmtp.sh"]
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfcgi-bin \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-msmtp.sh"]
 CMD ["php-fpm"]

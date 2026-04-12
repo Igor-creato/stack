@@ -1,10 +1,11 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # ── Generate msmtp config from environment ──────────────
 if [ -n "$SMTP_HOST" ]; then
-  # tls_starttls: on for STARTTLS (port 587), off for implicit TLS (port 465)
   STARTTLS="on"
+
+  # если implicit TLS (465)
   if [ "$SMTP_SECURE" = "ssl" ]; then
     STARTTLS="off"
   fi
@@ -15,7 +16,7 @@ auth           on
 tls            on
 tls_starttls   ${STARTTLS}
 tls_trust_file /etc/ssl/certs/ca-certificates.crt
-logfile        /dev/stderr
+logfile        syslog
 
 account        default
 host           ${SMTP_HOST}
@@ -29,5 +30,5 @@ EOF
   chown root:www-data /etc/msmtprc
 fi
 
-# ── Delegate to the original WordPress entrypoint ───────
+# ── ВАЖНО: передаём управление оригинальному entrypoint ─
 exec docker-entrypoint.sh "$@"
