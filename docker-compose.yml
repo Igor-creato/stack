@@ -47,7 +47,7 @@ services:
   # Traefik — reverse proxy + SSL
   # ═══════════════════════════════════════════
   traefik:
-    image: traefik:v3.6.11
+    image: traefik:v3.6.13
     container_name: traefik
     restart: always
     depends_on:
