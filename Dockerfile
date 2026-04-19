@@ -23,7 +23,14 @@ RUN echo '#!/bin/sh\n\
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libfcgi-bin \
     netcat-openbsd \
+    less \
     && rm -rf /var/lib/apt/lists/*
+
+# ── WP-CLI (для host-cron и администрирования) ──
+RUN curl -fsSL -o /usr/local/bin/wp \
+      https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
+ && chmod +x /usr/local/bin/wp \
+ && /usr/local/bin/wp --info --allow-root >/dev/null
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint-msmtp.sh"]
 CMD ["php-fpm"]

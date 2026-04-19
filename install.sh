@@ -245,16 +245,12 @@ fi
 
 # ─── Backup скрипт ────────────────────────────────────────
 chmod +x "$INSTALL_DIR/scripts/backup.sh" 2>/dev/null || true
-log "backup.sh готов"
+chmod +x "$INSTALL_DIR/scripts/setup-cron.sh" 2>/dev/null || true
+log "backup.sh, setup-cron.sh готовы"
 
-# ─── Cron для WP-Cron + backup ───────────────────────────
-CRON_WP="*/5 * * * * docker exec -u www-data wordpress php /var/www/html/wp-cron.php > /dev/null 2>&1"
-CRON_BACKUP="0 */6 * * * bash ${INSTALL_DIR}/scripts/backup.sh >> /var/log/backup.log 2>&1"
-
-# Добавляем в crontab реального пользователя (у него доступ к docker)
-CRON_USER="$REAL_USER"
-(crontab -u "$CRON_USER" -l 2>/dev/null | grep -v 'wp-cron.php' | grep -v 'backup.sh'; echo "$CRON_WP"; echo "$CRON_BACKUP") | sort -u | crontab -u "$CRON_USER" -
-log "Cron задачи установлены для ${CRON_USER} (wp-cron каждые 5 мин, backup каждые 6 часов)"
+# ─── Cron для Action Scheduler + WP-Cron + backup ────────
+info "Настройка cron (через setup-cron.sh)..."
+bash "${INSTALL_DIR}/scripts/setup-cron.sh"
 
 # ─── Системные лимиты ────────────────────────────────────
 info "Настройка системных лимитов..."

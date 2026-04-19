@@ -225,27 +225,6 @@ services:
         max-size: '10m'
         max-file: '5'
 
-  wp-cli:
-    image: wordpress:cli-php8.4
-    container_name: wp-cli
-    restart: "no"
-    networks:
-      - internal
-    depends_on:
-      mariadb:
-        condition: service_healthy
-    environment:
-      WORDPRESS_DB_HOST: mariadb:3306
-      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
-      WORDPRESS_DB_USER: ${MYSQL_USER}
-      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
-    secrets:
-      - db_password
-    volumes:
-      - ./volumes/wordpress:/var/www/html
-    entrypoint: ["wp"]
-    command: ["--info"]
-
   modsecurity:
     image: owasp/modsecurity-crs:4.24.1-nginx-alpine-202603150103
     container_name: modsecurity
