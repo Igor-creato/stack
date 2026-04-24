@@ -275,14 +275,18 @@ services:
       - traefik.http.routers.wordpress-login.service=modsec-svc
       - traefik.http.routers.wordpress-login.middlewares=wp-bruteforce,wp-headers
 
-      # ── Rate limit: основной сайт ──
-      - traefik.http.middlewares.ratelimit.ratelimit.average=50
-      - traefik.http.middlewares.ratelimit.ratelimit.burst=200
+      # ── Rate limit: основной сайт (NAT-safe для CGNAT пулов мобильных операторов) ──
+      # Внутренняя защита: plugin-level Group 13 NAT-safe RL (per-user для auth, subnet+UA для гостей)
+      - traefik.http.middlewares.ratelimit.ratelimit.average=500
+      - traefik.http.middlewares.ratelimit.ratelimit.burst=2000
+      - traefik.http.middlewares.ratelimit.ratelimit.period=1s
       - traefik.http.middlewares.ratelimit.ratelimit.sourcecriterion.ipstrategy.depth=1
 
-      # ── Rate limit: логин (адекватный, не убийственный) ──
-      - traefik.http.middlewares.wp-bruteforce.ratelimit.average=5
-      - traefik.http.middlewares.wp-bruteforce.ratelimit.burst=10
+      # ── Rate limit: /wp-login.php — адекватный для NAT, но режет одиночный brute-force ──
+      # Плагин НЕ хукается в wp_login_failed — Traefik тут единственный барьер
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.average=30
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.burst=100
+      - traefik.http.middlewares.wp-bruteforce.ratelimit.period=1s
       - traefik.http.middlewares.wp-bruteforce.ratelimit.sourcecriterion.ipstrategy.depth=1
 
       # ── Security headers ──
