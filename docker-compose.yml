@@ -243,6 +243,13 @@ services:
       - MODSEC_RULE_ENGINE=DetectionOnly # первые 1-2 недели только логи
       - ALLOWED_METHODS=GET HEAD POST OPTIONS PUT PATCH DELETE
       - MAX_FILE_SIZE=67108864
+      # ── Audit log в shared volume для CrowdSec ──
+      - MODSEC_AUDIT_ENGINE=RelevantOnly
+      - MODSEC_AUDIT_LOG_TYPE=Serial
+      - MODSEC_AUDIT_LOG=/var/log/modsec/modsec_audit.log
+      - MODSEC_AUDIT_LOG_FORMAT=JSON
+    volumes:
+      - ./volumes/modsec-logs:/var/log/modsec
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
@@ -304,7 +311,7 @@ services:
       #- traefik.http.routers.wordpress-main.middlewares=ratelimit,wp-headers,noindex,basicauth
 
     healthcheck:
-      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1']
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1:8080/nginx-health || exit 1']
       interval: 15s
       timeout: 5s
       retries: 3
@@ -331,6 +338,7 @@ services:
       - ./volumes/wordpress:/var/www/html:ro
       - ./volumes/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./volumes/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./volumes/nginx-logs:/var/log/nginx
       - nginx_cache:/var/cache/nginx
 
     healthcheck:
@@ -470,6 +478,50 @@ services:
         max-size: '5m'
         max-file: '2'
 
+  # ═══════════════════════════════════════════
+  # CrowdSec — IDS/IPS, режим обучения (без bouncer)
+  # Парсит логи Traefik/Nginx/ModSecurity, копит децизии
+  # в локальной БД, но НЕ применяет их (bouncer добавим
+  # после 1-2 недель калибровки whitelist'ов).
+  # CAPI: анонимная регистрация на первом старте →
+  # community blocklist в локальной БД.
+  # ═══════════════════════════════════════════
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.7.0
+    container_name: crowdsec
+    restart: always
+    networks:
+      - internal
+    environment:
+      TZ: Europe/Moscow
+      COLLECTIONS: >-
+        crowdsecurity/linux
+        crowdsecurity/traefik
+        crowdsecurity/nginx
+        crowdsecurity/base-http-scenarios
+        crowdsecurity/http-cve
+        crowdsecurity/wordpress
+        crowdsecurity/modsecurity
+      USE_WAL: 'true'
+    volumes:
+      - crowdsec_config:/etc/crowdsec
+      - crowdsec_data:/var/lib/crowdsec/data
+      - ./volumes/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - traefik_logs:/var/log/traefik:ro
+      - ./volumes/nginx-logs:/var/log/nginx:ro
+      - ./volumes/modsec-logs:/var/log/modsec:ro
+    healthcheck:
+      test: ['CMD', 'cscli', 'lapi', 'status']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
 # ═══════════════════════════════════════════
 # Volumes
 # ═══════════════════════════════════════════
@@ -484,6 +536,8 @@ volumes:
     driver: local
   vm_data:
   grafana_data:
+  crowdsec_config:
+  crowdsec_data:
 
 # ═══════════════════════════════════════════
 # Secrets

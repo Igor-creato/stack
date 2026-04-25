@@ -99,6 +99,9 @@ WP_SECURE_AUTH_SALT="$(generate_password 64)"
 WP_LOGGED_IN_SALT="$(generate_password 64)"
 WP_NONCE_SALT="$(generate_password 64)"
 
+# Grafana admin
+GRAFANA_PASSWORD="$(generate_password 24)"
+
 log "Пароли сгенерированы"
 
 # ─── Установка Docker (если нет) ─────────────────────────
@@ -131,6 +134,9 @@ info "Создание структуры директорий..."
 dirs=(
   "$INSTALL_DIR/volumes/traefik"
   "$INSTALL_DIR/volumes/nginx"
+  "$INSTALL_DIR/volumes/nginx-logs"
+  "$INSTALL_DIR/volumes/modsec-logs"
+  "$INSTALL_DIR/volumes/crowdsec"
   "$INSTALL_DIR/volumes/php-config"
   "$INSTALL_DIR/volumes/mariadb/conf.d"
   "$INSTALL_DIR/volumes/wordpress"
@@ -178,6 +184,9 @@ SMTP_USER=${SMTP_USER}
 SMTP_PASSWORD=${SMTP_PASSWORD}
 SMTP_SECURE=${SMTP_SECURE}
 SMTP_FROM=${SMTP_FROM}
+
+# Grafana
+GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
 EOF
 
 chmod 600 "$INSTALL_DIR/.env"
@@ -222,8 +231,12 @@ fi
 # mariadb: uid=999/gid=999
 chown -R 33:33  "$INSTALL_DIR/volumes/wordpress"
 chown -R 999:999 "$INSTALL_DIR/volumes/mariadb"
+chown -R 101:101 "$INSTALL_DIR/volumes/nginx-logs"
+chown -R 101:101 "$INSTALL_DIR/volumes/modsec-logs"
 chmod 755 "$INSTALL_DIR/volumes/wordpress"
 chmod 755 "$INSTALL_DIR/volumes/mariadb"
+chmod 755 "$INSTALL_DIR/volumes/nginx-logs"
+chmod 755 "$INSTALL_DIR/volumes/modsec-logs"
 
 log "Права на volumes установлены"
 
@@ -238,6 +251,7 @@ if [[ "$REAL_USER" != "root" ]]; then
   chown -R "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/nginx"
   chown -R "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/php-config"
   chown -R "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/traefik"
+  chown -R "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/crowdsec"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/docker-compose.yml" 2>/dev/null || true
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/scripts/backup.sh" 2>/dev/null || true
   log "Владелец файлов: ${REAL_USER}:${REAL_GROUP}"
@@ -301,6 +315,7 @@ echo "    MariaDB root:  $MYSQL_ROOT_PASSWORD"
 echo "    MariaDB user:  $MYSQL_PASSWORD"
 echo "    DB name:       $MYSQL_DATABASE"
 echo "    DB user:       $MYSQL_USER"
+echo "    Grafana admin: $GRAFANA_PASSWORD"
 echo ""
 info "SMTP:"
 echo "    Host:     $SMTP_HOST:$SMTP_PORT ($SMTP_SECURE)"
@@ -318,6 +333,14 @@ info "После первого запуска установите Redis Object
 echo ""
 echo -e "    ${CYAN}docker exec -u www-data wordpress wp plugin install redis-cache --activate${NC}"
 echo -e "    ${CYAN}docker exec -u www-data wordpress wp redis enable${NC}"
+echo ""
+info "CrowdSec работает в режиме обучения (без bouncer)."
+echo "    Через 1-2 недели проверь алерты и whitelist'ы:"
+echo -e "    ${CYAN}docker exec crowdsec cscli alerts list${NC}"
+echo -e "    ${CYAN}docker exec crowdsec cscli decisions list${NC}"
+echo -e "    ${CYAN}docker exec crowdsec cscli metrics${NC}"
+echo "    Подключение к CrowdSec Console (опционально):"
+echo -e "    ${CYAN}docker exec crowdsec cscli console enroll <KEY_FROM_app.crowdsec.net>${NC}"
 echo ""
 info "Сайт будет доступен: https://${DOMAIN}"
 echo ""
