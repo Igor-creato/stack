@@ -47,7 +47,7 @@ services:
   # Traefik — reverse proxy + SSL
   # ═══════════════════════════════════════════
   traefik:
-    image: traefik:v3.6.13
+    image: traefik:v3.6.14
     container_name: traefik
     restart: always
     depends_on:
@@ -83,7 +83,7 @@ services:
   # MariaDB
   # ═══════════════════════════════════════════
   mariadb:
-    image: mariadb:12.2.2
+    image: mariadb:11.8
     container_name: mariadb
     restart: always
     networks:
@@ -92,7 +92,7 @@ services:
     ports:
       - '127.0.0.1:33306:3306'
     environment:
-      TZ: Europe/Moscow
+      TZ: UTC
       MARIADB_AUTO_UPGRADE: '1'
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -121,7 +121,7 @@ services:
   # Redis — object cache (db=0 WordPress, db=1 App)
   # ═══════════════════════════════════════════
   redis:
-    image: redis:8.6-alpine
+    image: redis:8.6.2-alpine
     container_name: redis
     restart: always
     networks:
@@ -226,7 +226,7 @@ services:
         max-file: '5'
 
   modsecurity:
-    image: owasp/modsecurity-crs:4.24.1-nginx-alpine-202603150103
+    image: owasp/modsecurity-crs:4.25.0-nginx-alpine-202604040104
     container_name: modsecurity
     restart: always
     networks:
@@ -357,7 +357,7 @@ services:
   # node-exporter — метрики хоста (CPU/RAM/диск)
   # ═══════════════════════════════════════════
   node-exporter:
-    image: prom/node-exporter:v1.10.2
+    image: prom/node-exporter:v1.11.1
     container_name: node-exporter
     restart: unless-stopped
     pid: host
@@ -382,7 +382,7 @@ services:
   # cAdvisor — метрики Docker-контейнеров
   # ═══════════════════════════════════════════
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    image: gcr.io/cadvisor/cadvisor:v0.56.2
     container_name: cadvisor
     restart: unless-stopped
     command:
@@ -414,7 +414,7 @@ services:
   # VictoriaMetrics — сбор и хранение метрик
   # ═══════════════════════════════════════════
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.138.0
+    image: victoriametrics/victoria-metrics:v1.140.0
     container_name: victoriametrics
     restart: unless-stopped
     command:
@@ -487,13 +487,13 @@ services:
   # community blocklist в локальной БД.
   # ═══════════════════════════════════════════
   crowdsec:
-    image: crowdsecurity/crowdsec:v1.7.0
+    image: crowdsecurity/crowdsec:v1.7.7
     container_name: crowdsec
     restart: always
     networks:
       - internal
     environment:
-      TZ: Europe/Moscow
+      TZ: UTC
       COLLECTIONS: >-
         crowdsecurity/linux
         crowdsecurity/traefik
