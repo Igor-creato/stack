@@ -47,6 +47,8 @@ docker exec mariadb mariadb -u root -p"${DB_ROOT_PASS}" -e "
 
 echo "[OK] Пароль пользователя 'exporter' установлен"
 
-# Перезапустить exporter чтобы он подключился с новым паролем
-docker compose -f "${STACK_DIR}/docker-compose.yml" restart mysqld-exporter
-echo "[OK] mysqld-exporter перезапущен"
+# Пересоздать exporter чтобы он подхватил актуальный MYSQL_EXPORTER_PASSWORD из .env.
+# `restart` тут не подходит — он использует env, зафиксированный в момент создания
+# контейнера, а не текущее значение из .env. force-recreate перечитывает .env.
+docker compose -f "${STACK_DIR}/docker-compose.yml" up -d --force-recreate --no-deps mysqld-exporter
+echo "[OK] mysqld-exporter пересоздан с актуальным паролем"

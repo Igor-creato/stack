@@ -297,7 +297,8 @@ fi
 chmod +x "$INSTALL_DIR/scripts/backup.sh" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/scripts/setup-cron.sh" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/scripts/setup-mariadb-users.sh" 2>/dev/null || true
-log "backup.sh, setup-cron.sh, setup-mariadb-users.sh готовы"
+chmod +x "$INSTALL_DIR/scripts/install-dashboards.sh" 2>/dev/null || true
+log "backup.sh, setup-cron.sh, setup-mariadb-users.sh, install-dashboards.sh готовы"
 
 # ─── Системные лимиты ────────────────────────────────────
 info "Настройка системных лимитов..."
@@ -358,36 +359,44 @@ fi
 info "Настройка cron (через setup-cron.sh)..."
 bash "${INSTALL_DIR}/scripts/setup-cron.sh"
 
-# ─── Redis Object Cache plugin (идемпотентно) ────────────
-# Ждём что WordPress готов отвечать (полная инициализация ~3 мин из-за start_period 180s)
-info "Ожидаю готовности WordPress (до 4 минут)..."
-WP_READY=0
-for i in {1..120}; do
-  if docker exec -u www-data wordpress wp core is-installed &>/dev/null; then
-    WP_READY=1
-    break
-  fi
-  # WP может быть просто не настроенным — это тоже OK для wp-cli plugin install
-  if docker exec -u www-data wordpress wp --info &>/dev/null; then
-    WP_READY=1
+# ─── Сброс пароля Grafana (идемпотентно) ─────────────────
+# GF_SECURITY_ADMIN_PASSWORD действует только при первой инициализации grafana.db.
+# Если volume уже существует от прошлого запуска — env-var игнорируется и пароль
+# в SQLite остаётся старым. grafana-cli reset-admin-password синхронизирует его
+# с .env при каждом install.sh — безопасно для повторных запусков.
+info "Ожидаю готовности Grafana (до 60 секунд)..."
+GRAFANA_READY=0
+for i in {1..30}; do
+  if docker exec grafana wget -q --spider http://127.0.0.1:3000/api/health &>/dev/null; then
+    GRAFANA_READY=1
     break
   fi
   sleep 2
 done
 
-if [[ "$WP_READY" -eq 1 ]]; then
-  if ! docker exec -u www-data wordpress wp plugin is-active redis-cache &>/dev/null; then
-    info "Установка Redis Object Cache plugin..."
-    docker exec -u www-data wordpress wp plugin install redis-cache --activate || warn "Не удалось установить redis-cache (возможно WP ещё не инициализирован — выполни вручную)"
-    docker exec -u www-data wordpress wp redis enable 2>/dev/null || true
-    log "Redis Object Cache установлен"
+if [[ "$GRAFANA_READY" -eq 1 ]]; then
+  info "Синхронизация пароля admin'а Grafana с .env..."
+  if docker exec grafana grafana-cli admin reset-admin-password "${GRAFANA_PASSWORD}" >/dev/null 2>&1; then
+    log "Пароль Grafana установлен (admin / см. .env GRAFANA_PASSWORD)"
   else
-    log "Redis Object Cache уже активен"
+    warn "Не удалось сбросить пароль Grafana — выполни вручную:"
+    warn "  docker exec grafana grafana-cli admin reset-admin-password \"\$GRAFANA_PASSWORD\""
   fi
 else
-  warn "WP-CLI пока не готов. После завершения инсталляции WordPress выполни вручную:"
-  warn "  docker exec -u www-data wordpress wp plugin install redis-cache --activate"
-  warn "  docker exec -u www-data wordpress wp redis enable"
+  warn "Grafana не стала healthy за 60с. После старта выполни вручную:"
+  warn "  docker exec grafana grafana-cli admin reset-admin-password \"\$(grep ^GRAFANA_PASSWORD .env | cut -d= -f2-)\""
+fi
+
+# ─── Установка дашбордов Grafana (provisioning из файлов) ──
+info "Установка дашбордов (Node Exporter, cAdvisor, MySQL, Redis)..."
+if bash "${INSTALL_DIR}/scripts/install-dashboards.sh"; then
+  log "Дашборды установлены"
+  # Если Grafana уже была запущена ДО bind-mount директории dashboards —
+  # её нужно пересоздать чтобы провижининг подхватил новый mount.
+  docker compose -f "${INSTALL_DIR}/docker-compose.yml" up -d --no-deps grafana >/dev/null 2>&1 || true
+else
+  warn "Не удалось установить дашборды. Запусти вручную:"
+  warn "  bash scripts/install-dashboards.sh"
 fi
 
 # ─── Итог ─────────────────────────────────────────────────
@@ -430,6 +439,21 @@ info "Стек уже запущен. Проверь статус:"
 echo ""
 echo -e "    ${CYAN}cd $INSTALL_DIR${NC}"
 echo -e "    ${CYAN}docker compose ps${NC}"
+echo ""
+echo -e "${YELLOW}═══════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}   СЛЕДУЮЩИЙ ШАГ — установка WordPress${NC}"
+echo -e "${YELLOW}═══════════════════════════════════════════════════${NC}"
+echo ""
+info "1. Открой в браузере https://${DOMAIN} и пройди мастер установки WordPress"
+echo "    (Site Title, Username, Password, Email админа)."
+echo ""
+info "2. ПОСЛЕ того как WordPress установлен — поставь Redis Object Cache:"
+echo ""
+echo -e "    ${CYAN}docker exec -u www-data wordpress wp plugin install redis-cache --activate${NC}"
+echo -e "    ${CYAN}docker exec -u www-data wordpress wp redis enable${NC}"
+echo ""
+warn "Без этого шага WordPress будет работать, но не использовать Redis-кэш"
+warn "(падает производительность на 30-60%)."
 echo ""
 info "Тест что email-алерты ходят (~2 минуты до письма):"
 echo -e "    ${CYAN}docker stop nginx; sleep 150; docker start nginx${NC}"
