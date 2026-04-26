@@ -47,6 +47,9 @@ ignore_older_secs = 86400
 
 # nginx access — парсим log_format main
 # 1.2.3.4 - - [24/Apr/2026:10:15:22 +0000] "GET /path HTTP/1.1" 200 1234 "ref" "ua" rt=0.045 uct=0.001 uht=0.044 urt=0.044 cache=HIT
+#
+# Маскируем чувствительные query-параметры (token/api_key/secret/auth/password/sig)
+# в .path и .referer перед записью в VictoriaLogs (retention 14d).
 [transforms.nginx_access_parsed]
 type = "remap"
 inputs = ["nginx_access"]
@@ -63,6 +66,16 @@ if err == null {
   .request_time = to_float(parsed.request_time) ?? 0.0
   .upstream_response_time = to_float(parsed.upstream_response_time) ?? 0.0
   .cache_status = parsed.cache_status
+}
+secret_re = r'([?&](?:token|api[_-]?key|key|secret|auth|pwd|password|access[_-]?token|refresh[_-]?token|sig|signature|session|sid)=)[^&\s"]+'
+if exists(.path) {
+  .path = replace(to_string(.path) ?? "", secret_re, "$1***REDACTED***")
+}
+if exists(.referer) {
+  .referer = replace(to_string(.referer) ?? "", secret_re, "$1***REDACTED***")
+}
+if exists(.message) {
+  .message = replace(to_string(.message) ?? "", secret_re, "$1***REDACTED***")
 }
 .source_type = "nginx_access"
 .service = "nginx"
@@ -81,7 +94,12 @@ if err == null {
 .service = "nginx"
 '''
 
-# modsec audit — уже JSON, парсим в поля верхнего уровня
+# modsec audit — уже JSON, парсим в поля верхнего уровня.
+#
+# Маскируем потенциальные пароли/токены в request body, заголовках Authorization/Cookie
+# и в URI. Тело /wp-login.php дополнительно отрезано на стороне ModSecurity
+# (см. wordpress-exclusions.conf id:1010), но scrub оставляем как defense-in-depth
+# для остальных endpoint'ов (REST API, webhook'и партнёрских сетей).
 [transforms.modsec_parsed]
 type = "remap"
 inputs = ["modsec_audit"]
@@ -90,11 +108,36 @@ parsed, err = parse_json(.message)
 if err == null {
   . = merge(., parsed) ?? .
 }
+secret_re = r'(?i)("?(?:pwd|password|pass|api[_-]?key|secret|access[_-]?token|refresh[_-]?token|auth|token|sig|signature|session)"?\s*[:=]\s*"?)[^",&\s}]+'
+uri_re = r'([?&](?:token|api[_-]?key|key|secret|auth|pwd|password|access[_-]?token|refresh[_-]?token|sig|signature|session|sid)=)[^&\s"]+'
+if exists(.transaction.request.body) {
+  .transaction.request.body = replace(to_string(.transaction.request.body) ?? "", secret_re, "$1***REDACTED***")
+}
+if exists(.transaction.request.uri) {
+  .transaction.request.uri = replace(to_string(.transaction.request.uri) ?? "", uri_re, "$1***REDACTED***")
+}
+if exists(.transaction.request.headers."Authorization") {
+  .transaction.request.headers."Authorization" = "***REDACTED***"
+}
+if exists(.transaction.request.headers."authorization") {
+  .transaction.request.headers."authorization" = "***REDACTED***"
+}
+if exists(.transaction.request.headers."Cookie") {
+  .transaction.request.headers."Cookie" = "***REDACTED***"
+}
+if exists(.transaction.request.headers."cookie") {
+  .transaction.request.headers."cookie" = "***REDACTED***"
+}
+# страховка для произвольного JSON-формата: scrub самой исходной строки
+if exists(.message) {
+  .message = replace(to_string(.message) ?? "", secret_re, "$1***REDACTED***")
+}
 .source_type = "modsec_audit"
 .service = "modsecurity"
 '''
 
-# traefik access — уже JSON
+# traefik access — уже JSON.
+# RequestPath / RequestAddr / Referer чистим от секретов в query string.
 [transforms.traefik_parsed]
 type = "remap"
 inputs = ["traefik_access"]
@@ -102,6 +145,19 @@ source = '''
 parsed, err = parse_json(.message)
 if err == null {
   . = merge(., parsed) ?? .
+}
+uri_re = r'([?&](?:token|api[_-]?key|key|secret|auth|pwd|password|access[_-]?token|refresh[_-]?token|sig|signature|session|sid)=)[^&\s"]+'
+if exists(.RequestPath) {
+  .RequestPath = replace(to_string(.RequestPath) ?? "", uri_re, "$1***REDACTED***")
+}
+if exists(.RequestAddr) {
+  .RequestAddr = replace(to_string(.RequestAddr) ?? "", uri_re, "$1***REDACTED***")
+}
+if exists(."request_Referer") {
+  ."request_Referer" = replace(to_string(."request_Referer") ?? "", uri_re, "$1***REDACTED***")
+}
+if exists(.message) {
+  .message = replace(to_string(.message) ?? "", uri_re, "$1***REDACTED***")
 }
 .source_type = "traefik_access"
 .service = "traefik"

@@ -43,9 +43,10 @@ mkdir -p "$BACKUP_DIR"
 echo "[INFO] $(date): Начало backup в ${BACKUP_DIR}"
 
 # ── MariaDB dump ──
+# MYSQL_PWD через env — пароль НЕ попадает в `ps`/cmdline (в отличие от -p<pw>).
 echo "[INFO] $(date): Дамп MariaDB..."
-if docker exec mariadb mariadb-dump \
-  -u root -p"${DB_ROOT_PASS}" \
+if docker exec -e MYSQL_PWD="${DB_ROOT_PASS}" mariadb mariadb-dump \
+  -u root \
   --single-transaction \
   --routines \
   --triggers \

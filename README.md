@@ -213,8 +213,9 @@ docker compose build wordpress && docker compose up -d wordpress
 # PHP-FPM status
 docker exec nginx curl -s http://127.0.0.1/fpm-status
 
-# MariaDB connections
-docker exec mariadb mariadb -u root -p"$(cat secrets/db_root_password.txt)" -e "SHOW STATUS LIKE 'Threads_connected';"
+# MariaDB connections (MYSQL_PWD через env — пароль не светится в `ps`)
+docker exec -e MYSQL_PWD="$(cat secrets/db_root_password.txt)" mariadb \
+  mariadb -u root -e "SHOW STATUS LIKE 'Threads_connected';"
 
 # Redis stats
 docker exec redis redis-cli info stats | grep -E 'hits|misses|used_memory_human'

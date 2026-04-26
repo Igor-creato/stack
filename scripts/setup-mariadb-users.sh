@@ -37,8 +37,10 @@ for i in {1..30}; do
   sleep 2
 done
 
-# Установить актуальный пароль для exporter
-docker exec mariadb mariadb -u root -p"${DB_ROOT_PASS}" -e "
+# Установить актуальный пароль для exporter.
+# MYSQL_PWD передаётся через env, чтобы пароль НЕ попадал в `ps -ef`
+# и /proc/<pid>/cmdline (в отличие от `-p<password>`).
+docker exec -e MYSQL_PWD="${DB_ROOT_PASS}" mariadb mariadb -u root -e "
   CREATE USER IF NOT EXISTS 'exporter'@'%' IDENTIFIED BY '${MYSQL_EXPORTER_PASSWORD}';
   ALTER USER 'exporter'@'%' IDENTIFIED BY '${MYSQL_EXPORTER_PASSWORD}';
   GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';

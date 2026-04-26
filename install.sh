@@ -94,18 +94,10 @@ MYSQL_EXPORTER_PASSWORD="$(generate_password 28)"
 MYSQL_DATABASE="cashback_db"
 MYSQL_USER="cashback_user"
 
-# WordPress salts
-WP_AUTH_KEY="$(generate_password 64)"
-WP_SECURE_AUTH_KEY="$(generate_password 64)"
-WP_LOGGED_IN_KEY="$(generate_password 64)"
-WP_NONCE_KEY="$(generate_password 64)"
-WP_AUTH_SALT="$(generate_password 64)"
-WP_SECURE_AUTH_SALT="$(generate_password 64)"
-WP_LOGGED_IN_SALT="$(generate_password 64)"
-WP_NONCE_SALT="$(generate_password 64)"
-
 # Grafana admin
 GRAFANA_PASSWORD="$(generate_password 24)"
+
+# WP-соли генерируются образом WordPress на старте, поэтому здесь не дублируем.
 
 log "Пароли сгенерированы"
 
@@ -170,36 +162,22 @@ DOMAIN=${DOMAIN}
 ACME_EMAIL=${ACME_EMAIL}
 
 # MariaDB
-MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
 MYSQL_DATABASE=${MYSQL_DATABASE}
 MYSQL_USER=${MYSQL_USER}
-MYSQL_PASSWORD=${MYSQL_PASSWORD}
+# MYSQL_ROOT_PASSWORD и MYSQL_PASSWORD хранятся в secrets/, не в .env,
+# чтобы не светиться через `docker inspect` mariadb-контейнера.
 
-# WordPress Salts
-WP_AUTH_KEY=${WP_AUTH_KEY}
-WP_SECURE_AUTH_KEY=${WP_SECURE_AUTH_KEY}
-WP_LOGGED_IN_KEY=${WP_LOGGED_IN_KEY}
-WP_NONCE_KEY=${WP_NONCE_KEY}
-WP_AUTH_SALT=${WP_AUTH_SALT}
-WP_SECURE_AUTH_SALT=${WP_SECURE_AUTH_SALT}
-WP_LOGGED_IN_SALT=${WP_LOGGED_IN_SALT}
-WP_NONCE_SALT=${WP_NONCE_SALT}
-
-# SMTP
+# SMTP (логин — в env, пароль — в secrets/smtp_password.txt)
 SMTP_HOST=${SMTP_HOST}
 SMTP_PORT=${SMTP_PORT}
 SMTP_USER=${SMTP_USER}
-SMTP_PASSWORD=${SMTP_PASSWORD}
 SMTP_SECURE=${SMTP_SECURE}
 SMTP_FROM=${SMTP_FROM}
-
-# Grafana
-GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
 
 # Email для алертов Grafana
 ALERT_EMAIL=${ALERT_EMAIL}
 
-# mysqld-exporter (read-only пользователь, ALTER USER применяется один раз после старта MariaDB)
+# mysqld-exporter (нужен только для setup-mariadb-users.sh, ALTER USER идемпотентен)
 MYSQL_EXPORTER_PASSWORD=${MYSQL_EXPORTER_PASSWORD}
 EOF
 
@@ -211,8 +189,14 @@ log ".env создан (chmod 600)"
 # Контейнерные процессы (www-data uid 33, mysql uid 999, etc.) должны
 # мочь читать файлы. Делаем секреты 0644, а саму директорию 0700,
 # чтобы доступ извне (не из контейнеров) был только у владельца.
-echo -n "$MYSQL_ROOT_PASSWORD" > "$INSTALL_DIR/secrets/db_root_password.txt"
-echo -n "$MYSQL_PASSWORD"      > "$INSTALL_DIR/secrets/db_password.txt"
+#
+# Пароли держим в secrets/, а не в .env — чтобы они не были видны через
+# `docker inspect <container>` (env-переменные контейнера видны любому
+# процессу с доступом к Docker API, в т.ч. cAdvisor, докер-сокет-прокси).
+printf '%s' "$MYSQL_ROOT_PASSWORD" > "$INSTALL_DIR/secrets/db_root_password.txt"
+printf '%s' "$MYSQL_PASSWORD"      > "$INSTALL_DIR/secrets/db_password.txt"
+printf '%s' "$SMTP_PASSWORD"       > "$INSTALL_DIR/secrets/smtp_password.txt"
+printf '%s' "$GRAFANA_PASSWORD"    > "$INSTALL_DIR/secrets/grafana_admin_password.txt"
 
 chmod 700 "$INSTALL_DIR/secrets"
 chmod 644 "$INSTALL_DIR/secrets/"*.txt
@@ -280,8 +264,7 @@ log "Права на volumes установлены"
 # Чтобы docker compose работал без sudo
 if [[ "$REAL_USER" != "root" ]]; then
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/.env"
-  chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/db_root_password.txt"
-  chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/db_password.txt"
+  chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/"*.txt
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/traefik/acme.json"
   chown -R "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/nginx"
@@ -375,16 +358,18 @@ for i in {1..30}; do
 done
 
 if [[ "$GRAFANA_READY" -eq 1 ]]; then
-  info "Синхронизация пароля admin'а Grafana с .env..."
-  if docker exec grafana grafana-cli admin reset-admin-password "${GRAFANA_PASSWORD}" >/dev/null 2>&1; then
-    log "Пароль Grafana установлен (admin / см. .env GRAFANA_PASSWORD)"
+  info "Синхронизация пароля admin'а Grafana..."
+  # Читаем пароль из docker secret внутри контейнера, чтобы он не появлялся
+  # в argv `docker exec` на хосте (виден в `ps -ef` host'а).
+  if docker exec grafana sh -c 'grafana-cli admin reset-admin-password "$(cat /run/secrets/grafana_admin_password)"' >/dev/null 2>&1; then
+    log "Пароль Grafana установлен (admin / см. secrets/grafana_admin_password.txt)"
   else
     warn "Не удалось сбросить пароль Grafana — выполни вручную:"
-    warn "  docker exec grafana grafana-cli admin reset-admin-password \"\$GRAFANA_PASSWORD\""
+    warn "  docker exec grafana sh -c 'grafana-cli admin reset-admin-password \"\$(cat /run/secrets/grafana_admin_password)\"'"
   fi
 else
   warn "Grafana не стала healthy за 60с. После старта выполни вручную:"
-  warn "  docker exec grafana grafana-cli admin reset-admin-password \"\$(grep ^GRAFANA_PASSWORD .env | cut -d= -f2-)\""
+  warn "  docker exec grafana sh -c 'grafana-cli admin reset-admin-password \"\$(cat /run/secrets/grafana_admin_password)\"'"
 fi
 
 # ─── Установка дашбордов Grafana (provisioning из файлов) ──
@@ -411,7 +396,9 @@ echo "    ├── docker-compose.yml"
 echo "    ├── .env                   (chmod 600)"
 echo "    ├── secrets/"
 echo "    │   ├── db_root_password.txt"
-echo "    │   └── db_password.txt"
+echo "    │   ├── db_password.txt"
+echo "    │   ├── smtp_password.txt"
+echo "    │   └── grafana_admin_password.txt"
 echo "    ├── volumes/"
 echo "    │   ├── traefik/"
 echo "    │   ├── nginx/"
@@ -421,19 +408,16 @@ echo "    │   └── wordpress/"
 echo "    └── scripts/"
 echo "        └── backup.sh"
 echo ""
-info "Сохранённые пароли:"
-echo "    MariaDB root:  $MYSQL_ROOT_PASSWORD"
-echo "    MariaDB user:  $MYSQL_PASSWORD"
+info "Конфигурация:"
 echo "    DB name:       $MYSQL_DATABASE"
 echo "    DB user:       $MYSQL_USER"
-echo "    Grafana admin: $GRAFANA_PASSWORD"
+echo "    SMTP host:     $SMTP_HOST:$SMTP_PORT ($SMTP_SECURE)"
+echo "    SMTP user:     $SMTP_USER"
+echo "    SMTP from:     $SMTP_FROM"
 echo ""
-info "SMTP:"
-echo "    Host:     $SMTP_HOST:$SMTP_PORT ($SMTP_SECURE)"
-echo "    User:     $SMTP_USER"
-echo "    From:     $SMTP_FROM"
-echo ""
-warn "ЗАПИШИТЕ ПАРОЛИ! Они также сохранены в .env и secrets/"
+warn "Пароли сохранены в .env (chmod 600) и secrets/ (dir 0700)."
+warn "Прочитать вручную:  sudo cat ${INSTALL_DIR}/.env"
+warn "Не выводи .env в логи и не коммить в git."
 echo ""
 info "Стек уже запущен. Проверь статус:"
 echo ""

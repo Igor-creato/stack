@@ -79,7 +79,7 @@ accessLog:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: 'dokument94@yandex.ru'
+      email: '__ACME_EMAIL__'
       storage: acme.json
       httpChallenge:
         entryPoint: web

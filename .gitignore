@@ -1,0 +1,17 @@
+# Секреты и локальный конфиг
+.env
+.env.*
+!.env.example
+.claude/
+secrets/
+
+# Сгенерированные из шаблонов файлы (содержат секреты/email)
+volumes/grafana/provisioning/alerting/contact-points.yml
+
+# Артефакты Let's Encrypt и runtime-данные
+volumes/traefik/acme.json
+volumes/wordpress/
+volumes/mariadb/data/
+volumes/nginx-logs/
+volumes/modsec-logs/
+volumes/grafana/dashboards/
