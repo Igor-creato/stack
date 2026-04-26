@@ -116,7 +116,14 @@ fi
 # ─── Сборка нового crontab ───────────────────────────────
 CRON_AS="* * * * * ${FLOCK_BIN} -n ${LOCK_DIR}/cashback-as.lock -c 'docker exec -u www-data wordpress wp action-scheduler run --batch-size=50 --batches=1 --group=cashback --quiet' >> ${LOG_DIR}/action-scheduler.log 2>&1"
 CRON_WP="*/5 * * * * ${FLOCK_BIN} -n ${LOCK_DIR}/cashback-wpcron.lock -c 'docker exec -u www-data wordpress wp cron event run --due-now --quiet' >> ${LOG_DIR}/wp-cron.log 2>&1"
-CRON_BACKUP="0 */6 * * * bash ${INSTALL_DIR}/scripts/backup.sh >> /var/log/backup.log 2>&1"
+# Бэкап-задача указывает на единый скрипт верхнего уровня (stack + webhook-receiver).
+# Если umbrella ещё не развёрнут, fallback на старый stack-only backup.sh.
+ROOT_DIR="$(cd "${INSTALL_DIR}/.." && pwd)"
+if [[ -x "${ROOT_DIR}/scripts/backup-all.sh" ]]; then
+  CRON_BACKUP="0 */6 * * * bash ${ROOT_DIR}/scripts/backup-all.sh >> /var/log/backup.log 2>&1"
+else
+  CRON_BACKUP="0 */6 * * * bash ${INSTALL_DIR}/scripts/backup.sh >> /var/log/backup.log 2>&1"
+fi
 
 # ─── Снимаем старые маркированные блоки + legacy-строки ──
 TMP_CRON="$(mktemp)"
