@@ -198,18 +198,25 @@ GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
 
 # Email для алертов Grafana
 ALERT_EMAIL=${ALERT_EMAIL}
+
+# mysqld-exporter (read-only пользователь, ALTER USER применяется один раз после старта MariaDB)
+MYSQL_EXPORTER_PASSWORD=${MYSQL_EXPORTER_PASSWORD}
 EOF
 
 chmod 600 "$INSTALL_DIR/.env"
 log ".env создан (chmod 600)"
 
 # ─── Docker secrets ───────────────────────────────────────
-echo -n "$MYSQL_ROOT_PASSWORD"     > "$INSTALL_DIR/secrets/db_root_password.txt"
-echo -n "$MYSQL_PASSWORD"          > "$INSTALL_DIR/secrets/db_password.txt"
-echo -n "$MYSQL_EXPORTER_PASSWORD" > "$INSTALL_DIR/secrets/mysqld_exporter_password.txt"
+# Compose без Swarm bind-mount'ит файлы секретов с правами хоста.
+# Контейнерные процессы (www-data uid 33, mysql uid 999, etc.) должны
+# мочь читать файлы. Делаем секреты 0644, а саму директорию 0700,
+# чтобы доступ извне (не из контейнеров) был только у владельца.
+echo -n "$MYSQL_ROOT_PASSWORD" > "$INSTALL_DIR/secrets/db_root_password.txt"
+echo -n "$MYSQL_PASSWORD"      > "$INSTALL_DIR/secrets/db_password.txt"
 
-chmod 600 "$INSTALL_DIR/secrets/"*.txt
-log "Docker secrets созданы (chmod 600)"
+chmod 700 "$INSTALL_DIR/secrets"
+chmod 644 "$INSTALL_DIR/secrets/"*.txt
+log "Docker secrets созданы (dir 0700, files 0644)"
 
 # ─── Traefik acme.json ────────────────────────────────────
 touch "$INSTALL_DIR/volumes/traefik/acme.json"
@@ -275,7 +282,6 @@ if [[ "$REAL_USER" != "root" ]]; then
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/.env"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/db_root_password.txt"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/db_password.txt"
-  chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/mysqld_exporter_password.txt"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/traefik/acme.json"
   chown -R "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/nginx"
@@ -290,11 +296,8 @@ fi
 # ─── Backup скрипт ────────────────────────────────────────
 chmod +x "$INSTALL_DIR/scripts/backup.sh" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/scripts/setup-cron.sh" 2>/dev/null || true
-log "backup.sh, setup-cron.sh готовы"
-
-# ─── Cron для Action Scheduler + WP-Cron + backup ────────
-info "Настройка cron (через setup-cron.sh)..."
-bash "${INSTALL_DIR}/scripts/setup-cron.sh"
+chmod +x "$INSTALL_DIR/scripts/setup-mariadb-users.sh" 2>/dev/null || true
+log "backup.sh, setup-cron.sh, setup-mariadb-users.sh готовы"
 
 # ─── Системные лимиты ────────────────────────────────────
 info "Настройка системных лимитов..."
@@ -318,12 +321,74 @@ SYSCTL
   log "Sysctl параметры применены"
 fi
 
-# ─── Подсказка по применению пароля mysqld-exporter ───────
-# initdb.d создаёт пользователя 'exporter' со временным паролем; install.sh не запускает
-# контейнеры, но после первого `docker compose up -d` нужно выполнить (один раз):
-#   docker exec mariadb mariadb -u root -p"$MYSQL_ROOT_PASSWORD" \
-#     -e "ALTER USER 'exporter'@'%' IDENTIFIED BY '$MYSQL_EXPORTER_PASSWORD'; FLUSH PRIVILEGES;"
-# install.sh покажет эту команду в финальном summary.
+# ─── Сборка образов и запуск стека ───────────────────────
+info "Сборка custom-образа WordPress (это может занять 1-2 минуты при первом запуске)..."
+cd "$INSTALL_DIR"
+docker compose build
+log "Образы собраны"
+
+info "Запуск стека (docker compose up -d)..."
+docker compose up -d
+log "Контейнеры запущены"
+
+# ─── Ожидание готовности MariaDB ─────────────────────────
+info "Ожидаю готовности MariaDB (до 90 секунд)..."
+MARIADB_READY=0
+for i in {1..45}; do
+  if docker exec mariadb healthcheck.sh --connect --innodb_initialized &>/dev/null; then
+    MARIADB_READY=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$MARIADB_READY" -ne 1 ]]; then
+  warn "MariaDB не стала healthy за 90с. Проверь: docker logs mariadb"
+  warn "После решения запусти вручную: bash scripts/setup-mariadb-users.sh"
+else
+  log "MariaDB готова"
+
+  # ─── Установка пароля для mysqld-exporter ──────────────
+  info "Установка пароля для mysqld-exporter..."
+  bash "${INSTALL_DIR}/scripts/setup-mariadb-users.sh"
+fi
+
+# ─── Cron для Action Scheduler + WP-Cron + backup ────────
+# Запускается ПОСЛЕ старта стека, чтобы WP-CLI проверка прошла без warning
+info "Настройка cron (через setup-cron.sh)..."
+bash "${INSTALL_DIR}/scripts/setup-cron.sh"
+
+# ─── Redis Object Cache plugin (идемпотентно) ────────────
+# Ждём что WordPress готов отвечать (полная инициализация ~3 мин из-за start_period 180s)
+info "Ожидаю готовности WordPress (до 4 минут)..."
+WP_READY=0
+for i in {1..120}; do
+  if docker exec -u www-data wordpress wp core is-installed &>/dev/null; then
+    WP_READY=1
+    break
+  fi
+  # WP может быть просто не настроенным — это тоже OK для wp-cli plugin install
+  if docker exec -u www-data wordpress wp --info &>/dev/null; then
+    WP_READY=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$WP_READY" -eq 1 ]]; then
+  if ! docker exec -u www-data wordpress wp plugin is-active redis-cache &>/dev/null; then
+    info "Установка Redis Object Cache plugin..."
+    docker exec -u www-data wordpress wp plugin install redis-cache --activate || warn "Не удалось установить redis-cache (возможно WP ещё не инициализирован — выполни вручную)"
+    docker exec -u www-data wordpress wp redis enable 2>/dev/null || true
+    log "Redis Object Cache установлен"
+  else
+    log "Redis Object Cache уже активен"
+  fi
+else
+  warn "WP-CLI пока не готов. После завершения инсталляции WordPress выполни вручную:"
+  warn "  docker exec -u www-data wordpress wp plugin install redis-cache --activate"
+  warn "  docker exec -u www-data wordpress wp redis enable"
+fi
 
 # ─── Итог ─────────────────────────────────────────────────
 echo ""
@@ -361,21 +426,13 @@ echo "    From:     $SMTP_FROM"
 echo ""
 warn "ЗАПИШИТЕ ПАРОЛИ! Они также сохранены в .env и secrets/"
 echo ""
-info "Следующий шаг — запуск стека:"
+info "Стек уже запущен. Проверь статус:"
 echo ""
 echo -e "    ${CYAN}cd $INSTALL_DIR${NC}"
-echo -e "    ${CYAN}docker compose up -d${NC}"
+echo -e "    ${CYAN}docker compose ps${NC}"
 echo ""
-info "После первого старта MariaDB установите рабочий пароль для mysqld-exporter:"
-echo ""
-echo -e "    ${CYAN}docker exec mariadb mariadb -u root -p\"\$(cat secrets/db_root_password.txt)\" \\${NC}"
-echo -e "    ${CYAN}  -e \"ALTER USER 'exporter'@'%' IDENTIFIED BY '\$(cat secrets/mysqld_exporter_password.txt)'; FLUSH PRIVILEGES;\"${NC}"
-echo -e "    ${CYAN}docker compose restart mysqld-exporter${NC}"
-echo ""
-info "После первого запуска установите Redis Object Cache:"
-echo ""
-echo -e "    ${CYAN}docker exec -u www-data wordpress wp plugin install redis-cache --activate${NC}"
-echo -e "    ${CYAN}docker exec -u www-data wordpress wp redis enable${NC}"
+info "Тест что email-алерты ходят (~2 минуты до письма):"
+echo -e "    ${CYAN}docker stop nginx; sleep 150; docker start nginx${NC}"
 echo ""
 info "CrowdSec работает в режиме обучения (без bouncer)."
 echo "    Через 1-2 недели проверь алерты и whitelist'ы:"
@@ -384,6 +441,9 @@ echo -e "    ${CYAN}docker exec crowdsec cscli decisions list${NC}"
 echo -e "    ${CYAN}docker exec crowdsec cscli metrics${NC}"
 echo "    Подключение к CrowdSec Console (опционально):"
 echo -e "    ${CYAN}docker exec crowdsec cscli console enroll <KEY_FROM_app.crowdsec.net>${NC}"
+echo ""
+info "Webhook-receiver стек (если используется) поднимается отдельно:"
+echo -e "    ${CYAN}cd ../webhook-receiver && docker compose build && docker compose up -d${NC}"
 echo ""
 info "Сайт будет доступен: https://${DOMAIN}"
 echo ""

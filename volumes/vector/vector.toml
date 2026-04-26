@@ -7,7 +7,11 @@
 #   - /var/log/nginx/error.log
 #   - /var/log/modsec/modsec_audit.log    (JSON, RelevantOnly)
 #   - /var/log/traefik/access.log         (JSON)
-#   - PHP-FPM stdout через docker_logs    (фильтр по wordpress)
+#
+#  PHP-FPM stdout НЕ забираем напрямую: docker_logs source требует
+#  /var/run/docker.sock, а у нас доступ к Docker API через
+#  socket-proxy. PHP Fatal эскалируется в HTTP 502 и ловится через
+#  nginx_error_parsed + алерт nginx-502-504 + php-fpm-saturation.
 # ═══════════════════════════════════════════════════════════
 
 [api]
@@ -39,10 +43,6 @@ include = ["/var/log/traefik/*.log"]
 read_from = "end"
 ignore_older_secs = 86400
 
-[sources.docker_php]
-type = "docker_logs"
-include_containers = ["wordpress"]
-
 # ── TRANSFORMS (VRL = Vector Remap Language) ────────────────
 
 # nginx access — парсим log_format main
@@ -60,7 +60,7 @@ if err == null {
   .bytes = to_int!(parsed.bytes)
   .referer = parsed.referer
   .user_agent = parsed.user_agent
-  .request_time = to_float!(parsed.request_time) ?? 0.0
+  .request_time = to_float(parsed.request_time) ?? 0.0
   .upstream_response_time = to_float(parsed.upstream_response_time) ?? 0.0
   .cache_status = parsed.cache_status
 }
@@ -107,25 +107,6 @@ if err == null {
 .service = "traefik"
 '''
 
-# php-fpm stdout — детектим уровни PHP
-[transforms.php_parsed]
-type = "remap"
-inputs = ["docker_php"]
-source = '''
-msg = string(.message) ?? ""
-if contains(msg, "PHP Fatal") {
-  .level = "fatal"
-} else if contains(msg, "PHP Warning") {
-  .level = "warning"
-} else if contains(msg, "PHP Notice") || contains(msg, "PHP Deprecated") {
-  .level = "notice"
-} else {
-  .level = "info"
-}
-.source_type = "php_fpm"
-.service = "wordpress"
-'''
-
 # ── SINK: VictoriaLogs (ES bulk API) ────────────────────────
 
 [sinks.victorialogs]
@@ -135,7 +116,6 @@ inputs = [
   "nginx_error_parsed",
   "modsec_parsed",
   "traefik_parsed",
-  "php_parsed",
 ]
 endpoints = ["http://victorialogs:9428/insert/elasticsearch/"]
 mode = "bulk"

@@ -454,9 +454,10 @@ services:
       - '--collect.info_schema.processlist'
       - '--collect.info_schema.innodb_metrics'
     environment:
-      MYSQLD_EXPORTER_PASSWORD_FILE: /run/secrets/mysqld_exporter_password
-    secrets:
-      - mysqld_exporter_password
+      # mysqld-exporter v0.16+ читает пароль из MYSQLD_EXPORTER_PASSWORD env-var.
+      # Значение берём из .env (он chmod 600); этот же пароль установлен у
+      # MariaDB-пользователя 'exporter' через ALTER USER в скрипте setup-mariadb-users.sh.
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD}
     networks:
       - internal
     depends_on:
@@ -594,8 +595,6 @@ services:
       - ./volumes/nginx-logs:/var/log/nginx:ro
       - ./volumes/modsec-logs:/var/log/modsec:ro
       - traefik_logs:/var/log/traefik:ro
-      # для tail PHP-FPM stdout (json-file driver)
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     networks:
       - internal
     logging:
@@ -722,5 +721,3 @@ secrets:
     file: ./secrets/db_root_password.txt
   db_password:
     file: ./secrets/db_password.txt
-  mysqld_exporter_password:
-    file: ./secrets/mysqld_exporter_password.txt
