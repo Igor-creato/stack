@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STACK_DIR="$(dirname "$SCRIPT_DIR")"
-BACKUP_ROOT="/opt/backups"
+BACKUP_ROOT="/home/igor/backup"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${BACKUP_ROOT}/${TIMESTAMP}"
 RETENTION_DAYS=7
@@ -38,7 +38,20 @@ if [[ -z "$DB_ROOT_PASS" ]]; then
   exit 1
 fi
 
-mkdir -p "$BACKUP_DIR"
+# ── Precondition: проверка прав (без авто-фикса) ──
+# Если что-то не так — печатаем подсказку и падаем. Чинит setup-cron.sh.
+PRECONDITION_OK=1
+if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+  echo "[ERROR] $(date): нет прав на ${BACKUP_ROOT}. Запусти: sudo bash $(dirname "$0")/setup-cron.sh"
+  PRECONDITION_OK=0
+fi
+if [[ -d "$TEXTFILE_DIR" ]] && [[ ! -w "$TEXTFILE_DIR" ]]; then
+  echo "[WARN] $(date): нет прав на ${TEXTFILE_DIR} — метрика для алерта backup-stale не обновится."
+  echo "[WARN] $(date): Запусти: sudo bash $(dirname "$0")/setup-cron.sh"
+fi
+if [[ "$PRECONDITION_OK" -ne 1 ]]; then
+  exit 2
+fi
 
 echo "[INFO] $(date): Начало backup в ${BACKUP_DIR}"
 
@@ -60,18 +73,36 @@ else
 fi
 
 # ── WordPress wp-content ──
+# В стеке используется bind mount ./volumes/wordpress:/var/www/html,
+# а не named volume — берём путь напрямую.
 echo "[INFO] $(date): Архивация wp-content..."
-WP_VOLUME="$(docker volume inspect --format '{{ .Mountpoint }}' "$(basename "$STACK_DIR")_wordpress_data" 2>/dev/null || echo "")"
+WP_PATH="${STACK_DIR}/volumes/wordpress"
 
-if [[ -n "$WP_VOLUME" && -d "${WP_VOLUME}/wp-content" ]]; then
+if [[ -d "${WP_PATH}/wp-content" ]]; then
+  # tar может вернуть код 1 на "file changed as we read it" — не критично,
+  # архив остаётся валидным. Поэтому ловим вывод и не валим скрипт.
+  WP_TAR_ERR="$(mktemp)"
+  TAR_RC=0
+  # GNU tar: --exclude / --warning должны идти ДО позиционного wp-content/,
+  # иначе tar печатает "no effect" и выходит с кодом 2.
   tar czf "${BACKUP_DIR}/wp-content.tar.gz" \
-    -C "${WP_VOLUME}" wp-content/ \
     --exclude='wp-content/cache' \
     --exclude='wp-content/upgrade' \
-    --exclude='wp-content/ai1wm-backups' 2>/dev/null
-  echo "[OK] $(date): wp-content: $(du -sh "${BACKUP_DIR}/wp-content.tar.gz" | cut -f1)"
+    --exclude='wp-content/ai1wm-backups' \
+    --warning=no-file-changed \
+    --warning=no-file-removed \
+    -C "${WP_PATH}" wp-content/ 2>"${WP_TAR_ERR}" || TAR_RC=$?
+  if [[ "$TAR_RC" -eq 0 ]] && [[ -s "${BACKUP_DIR}/wp-content.tar.gz" ]] && gzip -t "${BACKUP_DIR}/wp-content.tar.gz" 2>/dev/null; then
+    echo "[OK] $(date): wp-content: $(du -sh "${BACKUP_DIR}/wp-content.tar.gz" | cut -f1)"
+  elif [[ -s "${BACKUP_DIR}/wp-content.tar.gz" ]] && gzip -t "${BACKUP_DIR}/wp-content.tar.gz" 2>/dev/null; then
+    echo "[OK] $(date): wp-content (tar rc=${TAR_RC}, архив валиден): $(du -sh "${BACKUP_DIR}/wp-content.tar.gz" | cut -f1)"
+  else
+    echo "[ERROR] $(date): wp-content архив битый (tar rc=${TAR_RC}):"
+    head -5 "${WP_TAR_ERR}" >&2 || true
+  fi
+  rm -f "${WP_TAR_ERR}"
 else
-  echo "[WARN] $(date): WordPress volume не найден, пропускаю wp-content"
+  echo "[WARN] $(date): ${WP_PATH}/wp-content не найден, пропускаю wp-content"
 fi
 
 # ── Traefik certificates ──

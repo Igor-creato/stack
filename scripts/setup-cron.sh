@@ -77,6 +77,36 @@ chown "${REAL_USER}:${REAL_GROUP}" "$LOG_DIR"
 chmod 755 "$LOG_DIR"
 log "Каталог логов: ${LOG_DIR}"
 
+# ─── Права для backup.sh ────────────────────────────────
+# Идемпотентно: каталог бэкапов, лог и textfile collector
+# должны быть доступны на запись пользователю REAL_USER (под которым cron).
+BACKUP_ROOT="/home/${REAL_USER}/backup"
+BACKUP_LOG="/var/log/backup.log"
+TEXTFILE_DIR="/var/lib/node_exporter/textfile_collector"
+
+mkdir -p "$BACKUP_ROOT"
+chown "${REAL_USER}:${REAL_GROUP}" "$BACKUP_ROOT"
+chmod 750 "$BACKUP_ROOT"
+log "Каталог бэкапов: ${BACKUP_ROOT}"
+
+touch "$BACKUP_LOG"
+chown "${REAL_USER}:${REAL_GROUP}" "$BACKUP_LOG"
+chmod 644 "$BACKUP_LOG"
+log "Лог бэкапов: ${BACKUP_LOG}"
+
+# textfile collector: setgid + group=REAL_GROUP, чтобы скрипт писал,
+# а node-exporter (root) читал. mode 2775 — setgid bit + rwxrwxr-x.
+if [[ -d "$TEXTFILE_DIR" ]]; then
+  chown "root:${REAL_GROUP}" "$TEXTFILE_DIR"
+  chmod 2775 "$TEXTFILE_DIR"
+  # уже существующие .prom-файлы — выровнять группу/права
+  find "$TEXTFILE_DIR" -maxdepth 1 -name '*.prom' -exec chgrp "${REAL_GROUP}" {} \; -exec chmod 664 {} \; 2>/dev/null || true
+  log "Textfile collector: ${TEXTFILE_DIR} (root:${REAL_GROUP}, 2775)"
+else
+  warn "Каталог ${TEXTFILE_DIR} не существует — node-exporter ещё не запущен?"
+  warn "Метрика cashback_backup_last_success_timestamp_seconds будет недоступна"
+fi
+
 # ─── logrotate ──────────────────────────────────────────
 cat > "$LOGROTATE_CONF" <<LOGROTATE
 ${LOG_DIR}/*.log {

@@ -69,13 +69,13 @@ if err == null {
 }
 secret_re = r'([?&](?:token|api[_-]?key|key|secret|auth|pwd|password|access[_-]?token|refresh[_-]?token|sig|signature|session|sid)=)[^&\s"]+'
 if exists(.path) {
-  .path = replace(to_string(.path) ?? "", secret_re, "$1***REDACTED***")
+  .path = replace(to_string(.path) ?? "", secret_re, "$$1***REDACTED***")
 }
 if exists(.referer) {
-  .referer = replace(to_string(.referer) ?? "", secret_re, "$1***REDACTED***")
+  .referer = replace(to_string(.referer) ?? "", secret_re, "$$1***REDACTED***")
 }
 if exists(.message) {
-  .message = replace(to_string(.message) ?? "", secret_re, "$1***REDACTED***")
+  .message = replace(to_string(.message) ?? "", secret_re, "$$1***REDACTED***")
 }
 .source_type = "nginx_access"
 .service = "nginx"
@@ -111,10 +111,10 @@ if err == null {
 secret_re = r'(?i)("?(?:pwd|password|pass|api[_-]?key|secret|access[_-]?token|refresh[_-]?token|auth|token|sig|signature|session)"?\s*[:=]\s*"?)[^",&\s}]+'
 uri_re = r'([?&](?:token|api[_-]?key|key|secret|auth|pwd|password|access[_-]?token|refresh[_-]?token|sig|signature|session|sid)=)[^&\s"]+'
 if exists(.transaction.request.body) {
-  .transaction.request.body = replace(to_string(.transaction.request.body) ?? "", secret_re, "$1***REDACTED***")
+  .transaction.request.body = replace(to_string(.transaction.request.body) ?? "", secret_re, "$$1***REDACTED***")
 }
 if exists(.transaction.request.uri) {
-  .transaction.request.uri = replace(to_string(.transaction.request.uri) ?? "", uri_re, "$1***REDACTED***")
+  .transaction.request.uri = replace(to_string(.transaction.request.uri) ?? "", uri_re, "$$1***REDACTED***")
 }
 if exists(.transaction.request.headers."Authorization") {
   .transaction.request.headers."Authorization" = "***REDACTED***"
@@ -130,7 +130,7 @@ if exists(.transaction.request.headers."cookie") {
 }
 # страховка для произвольного JSON-формата: scrub самой исходной строки
 if exists(.message) {
-  .message = replace(to_string(.message) ?? "", secret_re, "$1***REDACTED***")
+  .message = replace(to_string(.message) ?? "", secret_re, "$$1***REDACTED***")
 }
 .source_type = "modsec_audit"
 .service = "modsecurity"
@@ -148,16 +148,16 @@ if err == null {
 }
 uri_re = r'([?&](?:token|api[_-]?key|key|secret|auth|pwd|password|access[_-]?token|refresh[_-]?token|sig|signature|session|sid)=)[^&\s"]+'
 if exists(.RequestPath) {
-  .RequestPath = replace(to_string(.RequestPath) ?? "", uri_re, "$1***REDACTED***")
+  .RequestPath = replace(to_string(.RequestPath) ?? "", uri_re, "$$1***REDACTED***")
 }
 if exists(.RequestAddr) {
-  .RequestAddr = replace(to_string(.RequestAddr) ?? "", uri_re, "$1***REDACTED***")
+  .RequestAddr = replace(to_string(.RequestAddr) ?? "", uri_re, "$$1***REDACTED***")
 }
 if exists(."request_Referer") {
-  ."request_Referer" = replace(to_string(."request_Referer") ?? "", uri_re, "$1***REDACTED***")
+  ."request_Referer" = replace(to_string(."request_Referer") ?? "", uri_re, "$$1***REDACTED***")
 }
 if exists(.message) {
-  .message = replace(to_string(.message) ?? "", uri_re, "$1***REDACTED***")
+  .message = replace(to_string(.message) ?? "", uri_re, "$$1***REDACTED***")
 }
 .source_type = "traefik_access"
 .service = "traefik"
