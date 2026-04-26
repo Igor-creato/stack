@@ -14,6 +14,8 @@ services:
     image: tecnativa/docker-socket-proxy:v0.4.2
     container_name: docker-socket-proxy
     restart: always
+    mem_limit: 64m
+    mem_reservation: 16m
     environment:
       CONTAINERS: 1
       NETWORKS: 1
@@ -50,6 +52,8 @@ services:
     image: traefik:v3.6.14
     container_name: traefik
     restart: always
+    mem_limit: 256m
+    mem_reservation: 64m
     depends_on:
       docker-socket-proxy:
         condition: service_started
@@ -86,6 +90,8 @@ services:
     image: mariadb:11.8
     container_name: mariadb
     restart: always
+    mem_limit: 1536m
+    mem_reservation: 512m
     networks:
       - internal
       - db-shared
@@ -124,6 +130,8 @@ services:
     image: redis:8.6.2-alpine
     container_name: redis
     restart: always
+    mem_limit: 320m
+    mem_reservation: 128m
     networks:
       - internal
       - db-shared
@@ -158,8 +166,8 @@ services:
     image: wordpress-custom:php8.4-fpm
     container_name: wordpress
     restart: always
-    cap_add:
-      - SYS_PTRACE
+    mem_limit: 1536m
+    mem_reservation: 512m
     depends_on:
       mariadb:
         condition: service_healthy
@@ -229,6 +237,8 @@ services:
     image: owasp/modsecurity-crs:4.25.0-nginx-alpine-202604040104
     container_name: modsecurity
     restart: always
+    mem_limit: 384m
+    mem_reservation: 96m
     networks:
       - proxy # принимает от Traefik
       - internal # отдаёт в Nginx
@@ -248,8 +258,13 @@ services:
       - MODSEC_AUDIT_LOG_TYPE=Serial
       - MODSEC_AUDIT_LOG=/var/log/modsec/modsec_audit.log
       - MODSEC_AUDIT_LOG_FORMAT=JSON
+      # Логировать только 5xx и аномальные 4xx (исключая 404/403) — режет ~70% шума
+      - MODSEC_AUDIT_LOG_RELEVANT_STATUS=^(?:5|4(?!04|03))
+      # Подключить WordPress-исключения ПЕРЕД CRS правилами (нужно для ctl:ruleRemoveById)
+      - MODSEC_INCLUDE=/etc/modsecurity.d/local-rules/*.conf
     volumes:
       - ./volumes/modsec-logs:/var/log/modsec
+      - ./volumes/modsecurity/local-rules:/etc/modsecurity.d/local-rules:ro
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
@@ -329,6 +344,8 @@ services:
     image: nginx:1.28.2-alpine
     container_name: nginx
     restart: always
+    mem_limit: 256m
+    mem_reservation: 64m
     networks:
       - internal
     depends_on:
@@ -360,16 +377,21 @@ services:
     image: prom/node-exporter:v1.11.1
     container_name: node-exporter
     restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 32m
     pid: host
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      # textfile collector — backup.sh пишет сюда таймстамп успеха
+      - /var/lib/node_exporter/textfile_collector:/host/textfile:ro
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/host/textfile'
     networks:
       - internal
     logging:
@@ -382,13 +404,18 @@ services:
   # cAdvisor — метрики Docker-контейнеров
   # ═══════════════════════════════════════════
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.56.2
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
     restart: unless-stopped
+    mem_limit: 768m
+    mem_reservation: 256m
     command:
       - '--docker_only=true'
       - '--housekeeping_interval=30s'
-      - '--store_container_labels=true'
+      - '--max_housekeeping_interval=60s'
+      - '--disable_metrics=disk,diskIO,tcp,udp,sched,process,hugetlb,referenced_memory'
+      - '--event_storage_event_limit=default=0'
+      - '--event_storage_age_limit=default=0'
     depends_on:
       modsecurity:
         condition: service_healthy
@@ -411,12 +438,93 @@ services:
         max-file: '2'
 
   # ═══════════════════════════════════════════
+  # mysqld-exporter — метрики MariaDB (slow queries, connections)
+  # ═══════════════════════════════════════════
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.19.0
+    container_name: mysqld-exporter
+    restart: unless-stopped
+    mem_limit: 64m
+    mem_reservation: 16m
+    command:
+      - '--mysqld.address=mariadb:3306'
+      - '--mysqld.username=exporter'
+      - '--collect.global_status'
+      - '--collect.global_variables'
+      - '--collect.info_schema.processlist'
+      - '--collect.info_schema.innodb_metrics'
+    environment:
+      MYSQLD_EXPORTER_PASSWORD_FILE: /run/secrets/mysqld_exporter_password
+    secrets:
+      - mysqld_exporter_password
+    networks:
+      - internal
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '2'
+
+  # ═══════════════════════════════════════════
+  # redis-exporter — метрики Redis (memory, DLQ size)
+  # ═══════════════════════════════════════════
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: redis-exporter
+    restart: unless-stopped
+    mem_limit: 64m
+    mem_reservation: 16m
+    command:
+      - '--redis.addr=redis://redis:6379'
+      - '--check-keys=webhook:dlq,webhook:queue'
+      - '--include-system-metrics'
+    networks:
+      - internal
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '2'
+
+  # ═══════════════════════════════════════════
+  # php-fpm-exporter — метрики PHP-FPM пула (busy children)
+  # Использует pm.status_listen=0.0.0.0:9001 из www.conf
+  # ═══════════════════════════════════════════
+  php-fpm-exporter:
+    image: hipages/php-fpm_exporter:2.2.0
+    container_name: php-fpm-exporter
+    restart: unless-stopped
+    mem_limit: 64m
+    mem_reservation: 16m
+    environment:
+      PHP_FPM_SCRAPE_URI: 'tcp://wordpress:9001/fpm-status'
+      PHP_FPM_LOG_LEVEL: warn
+    networks:
+      - internal
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '2'
+
+  # ═══════════════════════════════════════════
   # VictoriaMetrics — сбор и хранение метрик
   # ═══════════════════════════════════════════
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.140.0
     container_name: victoriametrics
     restart: unless-stopped
+    mem_limit: 1024m
+    mem_reservation: 256m
     command:
       - '--storageDataPath=/storage'
       - '--retentionPeriod=30d'
@@ -427,9 +535,69 @@ services:
       - ./volumes/victoriametrics/scrape.yml:/etc/victoriametrics/scrape.yml:ro
     networks:
       - internal
+      - db-shared # чтобы достать webhook-worker:9100 из второго стека
     depends_on:
       - node-exporter
       - cadvisor
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '2'
+
+  # ═══════════════════════════════════════════
+  # VictoriaLogs — хранилище логов (от авторов VictoriaMetrics)
+  # Принимает логи через Elasticsearch _bulk API и Loki API.
+  # Доступ через Grafana datasource victoriametrics-logs-datasource.
+  # ═══════════════════════════════════════════
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.50.0
+    container_name: victorialogs
+    restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 96m
+    command:
+      - '--storageDataPath=/storage'
+      - '--retentionPeriod=14d'
+      - '--httpListenAddr=:9428'
+    volumes:
+      - vlogs_data:/storage
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:9428/health || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: '5m'
+        max-file: '2'
+
+  # ═══════════════════════════════════════════
+  # Vector — log shipper (nginx, modsec, traefik, php-fpm stdout → VictoriaLogs)
+  # ═══════════════════════════════════════════
+  vector:
+    image: timberio/vector:0.55.0-alpine
+    container_name: vector
+    restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 32m
+    command: ['--config', '/etc/vector/vector.toml']
+    depends_on:
+      victorialogs:
+        condition: service_healthy
+    volumes:
+      - ./volumes/vector/vector.toml:/etc/vector/vector.toml:ro
+      - ./volumes/nginx-logs:/var/log/nginx:ro
+      - ./volumes/modsec-logs:/var/log/modsec:ro
+      - traefik_logs:/var/log/traefik:ro
+      # для tail PHP-FPM stdout (json-file driver)
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - internal
     logging:
       driver: json-file
       options:
@@ -445,6 +613,8 @@ services:
     image: grafana/grafana:12.4.1
     container_name: grafana
     restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 128m
     ports:
       - '127.0.0.1:3000:3000' # только localhost — доступ через SSH-туннель
     environment:
@@ -453,6 +623,8 @@ services:
       GF_USERS_ALLOW_SIGN_UP: 'false'
       GF_AUTH_ANONYMOUS_ENABLED: 'false'
       GF_SERVER_ROOT_URL: http://localhost:3000
+      # VictoriaLogs datasource plugin
+      GF_INSTALL_PLUGINS: 'victoriametrics-logs-datasource'
       # ── SMTP (те же реквизиты что у WordPress) ──
       GF_SMTP_ENABLED: 'true'
       GF_SMTP_HOST: ${SMTP_HOST}:${SMTP_PORT:-587}
@@ -490,6 +662,8 @@ services:
     image: crowdsecurity/crowdsec:v1.7.7
     container_name: crowdsec
     restart: always
+    mem_limit: 256m
+    mem_reservation: 96m
     networks:
       - internal
     environment:
@@ -535,6 +709,7 @@ volumes:
   traefik_logs:
     driver: local
   vm_data:
+  vlogs_data:
   grafana_data:
   crowdsec_config:
   crowdsec_data:
@@ -547,3 +722,5 @@ secrets:
     file: ./secrets/db_root_password.txt
   db_password:
     file: ./secrets/db_password.txt
+  mysqld_exporter_password:
+    file: ./secrets/mysqld_exporter_password.txt

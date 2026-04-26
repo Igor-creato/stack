@@ -13,6 +13,9 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${BACKUP_ROOT}/${TIMESTAMP}"
 RETENTION_DAYS=7
 
+# Textfile collector для node-exporter — алерт backup-stale смотрит сюда
+TEXTFILE_DIR="/var/lib/node_exporter/textfile_collector"
+
 # Загрузить переменные
 if [[ -f "${STACK_DIR}/.env" ]]; then
   set -a
@@ -96,3 +99,20 @@ fi
 # ── Итог ──
 TOTAL_SIZE="$(du -sh "${BACKUP_DIR}" | cut -f1)"
 echo "[DONE] $(date): Backup завершён. Размер: ${TOTAL_SIZE}. Путь: ${BACKUP_DIR}"
+
+# ── Textfile collector — записываем таймстамп успеха ──
+# node-exporter монтирует /var/lib/node_exporter/textfile_collector → /host/textfile_collector
+# и выставляет --collector.textfile.directory на эту директорию
+if [[ -d "${TEXTFILE_DIR}" ]] && [[ -s "${BACKUP_DIR}/db.sql.gz" ]]; then
+  TMP="$(mktemp "${TEXTFILE_DIR}/cashback_backup.prom.XXXXXX")"
+  cat > "${TMP}" <<EOF
+# HELP cashback_backup_last_success_timestamp_seconds Unix ts последнего успешного бэкапа MariaDB
+# TYPE cashback_backup_last_success_timestamp_seconds gauge
+cashback_backup_last_success_timestamp_seconds $(date +%s)
+# HELP cashback_backup_size_bytes Размер последнего бэкапа в байтах
+# TYPE cashback_backup_size_bytes gauge
+cashback_backup_size_bytes $(du -sb "${BACKUP_DIR}" | cut -f1)
+EOF
+  mv "${TMP}" "${TEXTFILE_DIR}/cashback_backup.prom"
+  chmod 644 "${TEXTFILE_DIR}/cashback_backup.prom"
+fi

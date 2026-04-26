@@ -68,10 +68,14 @@ SMTP_SECURE="${SMTP_SECURE:-tls}"
 read -rp "$(echo -e "${CYAN}Email отправителя (From) [${SMTP_USER}]: ${NC}")" SMTP_FROM
 SMTP_FROM="${SMTP_FROM:-$SMTP_USER}"
 
+read -rp "$(echo -e "${CYAN}Email для получения алертов Grafana (можно через запятую) [${SMTP_USER}]: ${NC}")" ALERT_EMAIL
+ALERT_EMAIL="${ALERT_EMAIL:-$SMTP_USER}"
+
 echo ""
 info "Домен:  $DOMAIN"
 info "Email:  $ACME_EMAIL"
 info "SMTP:   $SMTP_HOST:$SMTP_PORT ($SMTP_SECURE)"
+info "Алерты: $ALERT_EMAIL"
 echo ""
 read -rp "$(echo -e "${YELLOW}Продолжить? (y/n): ${NC}")" CONFIRM
 if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
@@ -86,6 +90,7 @@ generate_password() {
 
 MYSQL_ROOT_PASSWORD="$(generate_password 32)"
 MYSQL_PASSWORD="$(generate_password 28)"
+MYSQL_EXPORTER_PASSWORD="$(generate_password 28)"
 MYSQL_DATABASE="cashback_db"
 MYSQL_USER="cashback_user"
 
@@ -142,7 +147,10 @@ dirs=(
   "$INSTALL_DIR/volumes/wordpress"
   "$INSTALL_DIR/secrets"
   "$INSTALL_DIR/scripts"
+  "$INSTALL_DIR/volumes/modsecurity/local-rules"
+  "$INSTALL_DIR/volumes/vector"
   "/opt/backups"
+  "/var/lib/node_exporter/textfile_collector"
 )
 
 for d in "${dirs[@]}"; do
@@ -187,14 +195,18 @@ SMTP_FROM=${SMTP_FROM}
 
 # Grafana
 GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
+
+# Email для алертов Grafana
+ALERT_EMAIL=${ALERT_EMAIL}
 EOF
 
 chmod 600 "$INSTALL_DIR/.env"
 log ".env создан (chmod 600)"
 
 # ─── Docker secrets ───────────────────────────────────────
-echo -n "$MYSQL_ROOT_PASSWORD" > "$INSTALL_DIR/secrets/db_root_password.txt"
-echo -n "$MYSQL_PASSWORD"      > "$INSTALL_DIR/secrets/db_password.txt"
+echo -n "$MYSQL_ROOT_PASSWORD"     > "$INSTALL_DIR/secrets/db_root_password.txt"
+echo -n "$MYSQL_PASSWORD"          > "$INSTALL_DIR/secrets/db_password.txt"
+echo -n "$MYSQL_EXPORTER_PASSWORD" > "$INSTALL_DIR/secrets/mysqld_exporter_password.txt"
 
 chmod 600 "$INSTALL_DIR/secrets/"*.txt
 log "Docker secrets созданы (chmod 600)"
@@ -208,6 +220,23 @@ log "acme.json создан (chmod 600)"
 if [[ -f "$INSTALL_DIR/volumes/traefik/traefik.yml" ]]; then
   sed -i "s|__ACME_EMAIL__|${ACME_EMAIL}|g" "$INSTALL_DIR/volumes/traefik/traefik.yml"
   log "Email подставлен в traefik.yml"
+fi
+
+# ─── Рендеринг шаблонов Grafana provisioning ─────────────
+# Grafana 12.4 не разворачивает env-vars в contactPoints[].settings.addresses,
+# поэтому contact-points.yml генерится из шаблона .tpl через envsubst.
+if ! command -v envsubst &>/dev/null; then
+  info "Установка gettext-base (даёт envsubst)..."
+  apt-get update -qq && apt-get install -y --no-install-recommends gettext-base >/dev/null
+  log "gettext-base установлен"
+fi
+
+CP_TPL="$INSTALL_DIR/volumes/grafana/provisioning/alerting/contact-points.yml.tpl"
+CP_OUT="$INSTALL_DIR/volumes/grafana/provisioning/alerting/contact-points.yml"
+if [[ -f "$CP_TPL" ]]; then
+  ALERT_EMAIL="$ALERT_EMAIL" envsubst '${ALERT_EMAIL}' < "$CP_TPL" > "$CP_OUT"
+  chmod 644 "$CP_OUT"
+  log "contact-points.yml сгенерирован (ALERT_EMAIL=${ALERT_EMAIL})"
 fi
 
 # ─── Создание Docker-сетей ────────────────────────────────
@@ -246,6 +275,7 @@ if [[ "$REAL_USER" != "root" ]]; then
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/.env"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/db_root_password.txt"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/db_password.txt"
+  chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets/mysqld_exporter_password.txt"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/secrets"
   chown "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/traefik/acme.json"
   chown -R "${REAL_USER}:${REAL_GROUP}" "$INSTALL_DIR/volumes/nginx"
@@ -288,6 +318,13 @@ SYSCTL
   log "Sysctl параметры применены"
 fi
 
+# ─── Подсказка по применению пароля mysqld-exporter ───────
+# initdb.d создаёт пользователя 'exporter' со временным паролем; install.sh не запускает
+# контейнеры, но после первого `docker compose up -d` нужно выполнить (один раз):
+#   docker exec mariadb mariadb -u root -p"$MYSQL_ROOT_PASSWORD" \
+#     -e "ALTER USER 'exporter'@'%' IDENTIFIED BY '$MYSQL_EXPORTER_PASSWORD'; FLUSH PRIVILEGES;"
+# install.sh покажет эту команду в финальном summary.
+
 # ─── Итог ─────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
@@ -328,6 +365,12 @@ info "Следующий шаг — запуск стека:"
 echo ""
 echo -e "    ${CYAN}cd $INSTALL_DIR${NC}"
 echo -e "    ${CYAN}docker compose up -d${NC}"
+echo ""
+info "После первого старта MariaDB установите рабочий пароль для mysqld-exporter:"
+echo ""
+echo -e "    ${CYAN}docker exec mariadb mariadb -u root -p\"\$(cat secrets/db_root_password.txt)\" \\${NC}"
+echo -e "    ${CYAN}  -e \"ALTER USER 'exporter'@'%' IDENTIFIED BY '\$(cat secrets/mysqld_exporter_password.txt)'; FLUSH PRIVILEGES;\"${NC}"
+echo -e "    ${CYAN}docker compose restart mysqld-exporter${NC}"
 echo ""
 info "После первого запуска установите Redis Object Cache:"
 echo ""

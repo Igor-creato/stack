@@ -5,6 +5,12 @@
 # ═══════════════════════════════════════════
 
 [mysqld]
+# ── Timezone ──
+# Все timestamp-функции (NOW, CURRENT_TIMESTAMP, DEFAULT current_timestamp) возвращают UTC.
+# Парная настройка к PHP date.timezone=UTC и WP timezone_string='Europe/Moscow':
+# storage = UTC, отображение = wp_date() в зоне сайта. ADR utc-everywhere.
+default-time-zone = '+00:00'
+
 # ── Character Set ──
 character_set_server = utf8mb4
 collation_server = utf8mb4_unicode_520_ci
